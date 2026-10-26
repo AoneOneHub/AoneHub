@@ -1,5 +1,5 @@
 -- ==================================================================
--- HALLOWEEN 2026 EVENT SCRIPT (Fixed Scope & Dynamic Shop)
+-- HALLOWEEN 2026 EVENT SCRIPT (AoneHub Style UI)
 -- ==================================================================
 
 local Context = _G.AoneHub_Event_Context
@@ -30,7 +30,7 @@ if _G.AoneHub_Event_Cleanup then
     _G.AoneHub_Event_Cleanup = nil
 end
 
--- Helper UI
+-- Helper UI Dasar
 local function createBtn(parent, text, yPos, color, callback)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(1, -20, 0, 28)
@@ -215,30 +215,26 @@ end)
 
 
 -- ==================================================================
--- BAGIAN 2: SMART AUTO BUY EVENT SHOP
+-- BAGIAN 2: SMART AUTO BUY EVENT SHOP (AoneHub Style)
 -- ==================================================================
-local ShopSection = createSection(Scroll, "🛒 Smart Auto-Buy Halloween Shop", "eventShop")
+local ShopSection = createSection(Scroll, "🛒 Auto-Buy Halloween Shop", "eventShop")
 ShopSection.LayoutOrder = 2
-ShopSection.Size = UDim2.new(1, -10, 0, 280)
+ShopSection.Size = UDim2.new(1, -10, 0, 420) -- Diperbesar untuk menampung UI baru
 
 local isAutoBuying = false
 local buyThread = nil
-local selectedItems = {} 
+local selectedItems = {} -- Format: ["Nama Item"] = Table Data Item
 
-local statusBuyLbl = createStatusLbl(ShopSection, "Pilih item di bawah, lalu klik Start.", 28, 30)
+local statusBuyLbl = createStatusLbl(ShopSection, "Pilih item di bawah, lalu klik Start.", 28, 20)
 
 -- ⭐ FUNGSI DINAMIS: Mengambil Item Langsung dari Game
 local function fetchShopItems()
     local items = {}
-    
     local success, shopData = pcall(function()
         return require(ReplicatedStorage.Data.Events.Halloween2026Event.Halloween2026EventShopData)
     end)
     
-    if not success or not shopData then
-        warn("[Auto-Buy] Gagal load Halloween2026EventShopData!")
-        return items
-    end
+    if not success or not shopData then return items end
 
     local categoryMap = {
         SeedShop = "Scary Seeds",
@@ -248,7 +244,6 @@ local function fetchShopItems()
 
     for dataKey, categoryName in pairs(categoryMap) do
         local categoryData = shopData[dataKey]
-        
         if categoryData then
             for itemName, itemConfig in pairs(categoryData) do
                 if itemConfig.DisplayInShop then
@@ -256,29 +251,88 @@ local function fetchShopItems()
                         name = itemName,
                         cat = categoryName,
                         price = itemConfig.Price or 0,
-                        rarity = itemConfig.SeedRarity or "Common"
+                        rarity = itemConfig.SeedRarity or "Common",
+                        layoutOrder = itemConfig.LayoutOrder or 999
                     })
                 end
             end
         end
     end
-    
-    table.sort(items, function(a, b)
-        return a.price < b.price
-    end)
-    
     return items
 end
 
 local SHOP_ITEMS = fetchShopItems()
 
--- List Scroll untuk Item
+-- =====================================================
+-- SUB-TABS SYSTEM
+-- =====================================================
+local currentTab = "Scary Seeds"
+local subTabs = {
+    {"Scary Seeds", "🌱 Seeds"},
+    {"Frightening Fauna", "🐾 Pets"},
+    {"Demonic Decor", "🎨 Decor"}
+}
+local subTabBtns = {}
+
+local subTabBar = Instance.new("Frame")
+subTabBar.Size = UDim2.new(1, -20, 0, 22)
+subTabBar.Position = UDim2.new(0, 10, 0, 52)
+subTabBar.BackgroundTransparency = 1
+subTabBar.Parent = ShopSection
+
+local subTabLayout = Instance.new("UIListLayout")
+subTabLayout.FillDirection = Enum.FillDirection.Horizontal
+subTabLayout.Padding = UDim.new(0, 3)
+subTabLayout.Parent = subTabBar
+
+-- Search Bar
+local searchBar = Instance.new("TextBox")
+searchBar.Size = UDim2.new(1, -20, 0, 22)
+searchBar.Position = UDim2.new(0, 10, 0, 78)
+searchBar.BackgroundColor3 = C.input
+searchBar.BorderSizePixel = 0
+searchBar.Font = Enum.Font.Gotham
+searchBar.PlaceholderText = "🔍 Cari item..."
+searchBar.Text = ""
+searchBar.TextColor3 = C.text
+searchBar.TextSize = 9
+searchBar.ClearTextOnFocus = false
+searchBar.Parent = ShopSection
+Instance.new("UICorner", searchBar).CornerRadius = UDim.new(0, 4)
+
+-- Buttons All / Clear
+local btnAll = Instance.new("TextButton")
+btnAll.Size = UDim2.new(0.5, -15, 0, 22)
+btnAll.Position = UDim2.new(0, 10, 0, 105)
+btnAll.BackgroundColor3 = C.accent
+btnAll.BorderSizePixel = 0
+btnAll.Font = Enum.Font.GothamBold
+btnAll.Text = "✓ Pilih Semua (Tab Ini)"
+btnAll.TextColor3 = C.text
+btnAll.TextSize = 8
+btnAll.Parent = ShopSection
+Instance.new("UICorner", btnAll).CornerRadius = UDim.new(0, 3)
+
+local btnClear = Instance.new("TextButton")
+btnClear.Size = UDim2.new(0.5, -15, 0, 22)
+btnClear.Position = UDim2.new(0.5, 5, 0, 105)
+btnClear.BackgroundColor3 = C.danger
+btnClear.BorderSizePixel = 0
+btnClear.Font = Enum.Font.GothamBold
+btnClear.Text = "✕ Clear Semua"
+btnClear.TextColor3 = C.text
+btnClear.TextSize = 8
+btnClear.Parent = ShopSection
+Instance.new("UICorner", btnClear).CornerRadius = UDim.new(0, 3)
+
+-- List Scroll
 local itemScroll = Instance.new("ScrollingFrame")
-itemScroll.Size = UDim2.new(1, -20, 0, 140)
-itemScroll.Position = UDim2.new(0, 10, 0, 60)
+itemScroll.Size = UDim2.new(1, -20, 0, 150)
+itemScroll.Position = UDim2.new(0, 10, 0, 132)
 itemScroll.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
 itemScroll.BorderSizePixel = 0
-itemScroll.ScrollBarThickness = 3
+itemScroll.ScrollBarThickness = 4
+itemScroll.ScrollBarImageColor3 = C.accent
 itemScroll.Parent = ShopSection
 Instance.new("UICorner", itemScroll).CornerRadius = UDim.new(0, 4)
 
@@ -288,46 +342,7 @@ itemLayout.Parent = itemScroll
 
 local itemButtons = {}
 
-local function renderItems()
-    for _, btn in ipairs(itemButtons) do btn:Destroy() end
-    table.clear(itemButtons)
-
-    for i, item in ipairs(SHOP_ITEMS) do
-        local isSelected = selectedItems[item.name] ~= nil
-        
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -6, 0, 24)
-        btn.BackgroundColor3 = isSelected and C.success or Color3.fromRGB(45, 45, 58)
-        btn.Text = string.format("[%s] %s (%s) - %d CC", isSelected and "✓" or " ", item.name, item.cat, item.price)
-        btn.TextColor3 = C.text
-        btn.Font = Enum.Font.Gotham
-        btn.TextSize = 8
-        btn.TextXAlignment = Enum.TextXAlignment.Left
-        btn.LayoutOrder = i
-        btn.Parent = itemScroll
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
-        
-        local pad = Instance.new("UIPadding")
-        pad.PaddingLeft = UDim.new(0, 6)
-        pad.Parent = btn
-
-        btn.MouseButton1Click:Connect(function()
-            if selectedItems[item.name] then
-                selectedItems[item.name] = nil
-            else
-                selectedItems[item.name] = item 
-            end
-            renderItems()
-        end)
-        
-        table.insert(itemButtons, btn)
-    end
-    itemScroll.CanvasSize = UDim2.new(0, 0, 0, #SHOP_ITEMS * 26 + 10)
-end
-
-renderItems()
-
--- Fungsi Cek Stok dari DataService
+-- Fungsi Cek Stok & Uang
 local function getShopStock(shopName, itemName)
     local data = DataService:GetData()
     if not data or not data.EventShopStock or not data.EventShopStock[shopName] then return 0 end
@@ -336,7 +351,6 @@ local function getShopStock(shopName, itemName)
     return shopData.Stocks[itemName].Stock or 0
 end
 
--- Fungsi Cek Saldo Candy Corn
 local function getCandyCorn()
     local data = DataService:GetData()
     if data and data.SpecialCurrency then
@@ -345,9 +359,178 @@ local function getCandyCorn()
     return 0
 end
 
--- [PATCH FIX] Deklarasi buyToggleBtn dipisah agar tidak error nil di dalam closure
+-- =====================================================
+-- RENDER LIST ITEM (Desain Mirip AoneHub)
+-- =====================================================
+local function renderList()
+    for _, btn in ipairs(itemButtons) do btn:Destroy() end
+    table.clear(itemButtons)
+    
+    local searchTxt = searchBar.Text:lower()
+    
+    -- Filter Item berdasarkan Tab & Search
+    local filtered = {}
+    for _, item in ipairs(SHOP_ITEMS) do
+        if item.cat == currentTab then
+            if searchTxt == "" or item.name:lower():find(searchTxt, 1, true) then
+                table.insert(filtered, item)
+            end
+        end
+    end
+    
+    -- Urutkan berdasarkan LayoutOrder (seperti di game)
+    table.sort(filtered, function(a, b)
+        return a.layoutOrder < b.layoutOrder
+    end)
+
+    for i, item in ipairs(filtered) do
+        local isSel = selectedItems[item.name] ~= nil
+        local stock = getShopStock(item.cat, item.name)
+        
+        -- Frame Background
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, -8, 0, 26)
+        btn.BackgroundColor3 = isSel and Color3.fromRGB(60, 130, 220) or Color3.fromRGB(45, 45, 58)
+        btn.BorderSizePixel = 0
+        btn.Text = ""
+        btn.AutoButtonColor = false
+        btn.LayoutOrder = i
+        btn.Parent = itemScroll
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
+        
+        -- 1. Icon / Centang
+        local iconLbl = Instance.new("TextLabel")
+        iconLbl.Size = UDim2.new(0, 20, 1, 0)
+        iconLbl.BackgroundTransparency = 1
+        iconLbl.Text = isSel and "✓" or "○"
+        iconLbl.TextColor3 = isSel and C.text or C.textDim
+        iconLbl.Font = Enum.Font.GothamBold
+        iconLbl.TextSize = 10
+        iconLbl.Parent = btn
+        
+        -- 2. Nama Item
+        local nameLbl = Instance.new("TextLabel")
+        nameLbl.Size = UDim2.new(0.45, 0, 1, 0)
+        nameLbl.Position = UDim2.new(0, 20, 0, 0)
+        nameLbl.BackgroundTransparency = 1
+        nameLbl.Text = item.name
+        nameLbl.TextColor3 = C.text
+        nameLbl.Font = Enum.Font.GothamSemibold
+        nameLbl.TextSize = 8
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+        nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        nameLbl.Parent = btn
+        
+        -- 3. Stok
+        local stockLbl = Instance.new("TextLabel")
+        stockLbl.Size = UDim2.new(0.2, 0, 1, 0)
+        stockLbl.Position = UDim2.new(0.65, 0, 0, 0)
+        stockLbl.BackgroundTransparency = 1
+        stockLbl.Text = stock > 0 and ("📦 "..stock) or "❌ 0"
+        stockLbl.TextColor3 = stock > 0 and C.success or C.danger
+        stockLbl.Font = Enum.Font.Gotham
+        stockLbl.TextSize = 8
+        stockLbl.TextXAlignment = Enum.TextXAlignment.Right
+        stockLbl.Parent = btn
+        
+        -- 4. Harga
+        local priceLbl = Instance.new("TextLabel")
+        priceLbl.Size = UDim2.new(0.15, 0, 1, 0)
+        priceLbl.Position = UDim2.new(0.85, 0, 0, 0)
+        priceLbl.BackgroundTransparency = 1
+        priceLbl.Text = tostring(item.price)
+        priceLbl.TextColor3 = Color3.fromRGB(255, 200, 0) -- Kuning Emas
+        priceLbl.Font = Enum.Font.GothamBold
+        priceLbl.TextSize = 8
+        priceLbl.TextXAlignment = Enum.TextXAlignment.Right
+        priceLbl.Parent = btn
+        
+        -- Padding Kanan
+        local padR = Instance.new("UIPadding")
+        padR.PaddingRight = UDim.new(0, 6)
+        padR.Parent = btn
+
+        -- Click Listener
+        btn.MouseButton1Click:Connect(function()
+            if selectedItems[item.name] then
+                selectedItems[item.name] = nil
+            else
+                selectedItems[item.name] = item
+            end
+            renderList()
+        end)
+        
+        table.insert(itemButtons, btn)
+    end
+    
+    itemScroll.CanvasSize = UDim2.new(0, 0, 0, #filtered * 28 + 8)
+end
+
+-- Inisialisasi Sub-Tab Buttons
+for i, tabData in ipairs(subTabs) do
+    local tabName, tabLabel = tabData[1], tabData[2]
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.33, -2, 1, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 58)
+    btn.Text = tabLabel
+    btn.TextColor3 = C.textDim
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 8
+    btn.BorderSizePixel = 0
+    btn.AutoButtonColor = false
+    btn.Parent = subTabBar
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
+    
+    btn.MouseButton1Click:Connect(function()
+        currentTab = tabName
+        for n, b in pairs(subTabBtns) do
+            if n == tabName then
+                b.BackgroundColor3 = C.accent
+                b.TextColor3 = C.text
+            else
+                b.BackgroundColor3 = Color3.fromRGB(45, 45, 58)
+                b.TextColor3 = C.textDim
+            end
+        end
+        renderList()
+    end)
+    
+    subTabBtns[tabName] = btn
+    if tabName == currentTab then
+        btn.BackgroundColor3 = C.accent
+        btn.TextColor3 = C.text
+    end
+end
+
+-- Event Listener UI
+searchBar:GetPropertyChangedSignal("Text"):Connect(renderList)
+
+btnAll.MouseButton1Click:Connect(function()
+    for _, item in ipairs(SHOP_ITEMS) do
+        if item.cat == currentTab then
+            selectedItems[item.name] = item
+        end
+    end
+    renderList()
+end)
+
+btnClear.MouseButton1Click:Connect(function()
+    for _, item in ipairs(SHOP_ITEMS) do
+        if item.cat == currentTab then
+            selectedItems[item.name] = nil
+        end
+    end
+    renderList()
+end)
+
+-- Render pertama kali
+renderList()
+
+-- =====================================================
+-- LOOP AUTO BUY
+-- =====================================================
 local buyToggleBtn
-buyToggleBtn = createBtn(ShopSection, "▶️ Mulai Smart Auto-Buy", 210, C.success, function()
+buyToggleBtn = createBtn(ShopSection, "▶️ Mulai Smart Auto-Buy", 290, C.success, function()
     isAutoBuying = not isAutoBuying
     
     if isAutoBuying then
@@ -372,7 +555,7 @@ buyToggleBtn = createBtn(ShopSection, "▶️ Mulai Smart Auto-Buy", 210, C.succ
                 local candyCorn = getCandyCorn()
                 local itemToBuy = nil
                 
-                -- 1. Cari item yang dipilih DAN stoknya > 0 DAN uang cukup
+                -- Cari item yang dipilih DAN stoknya > 0 DAN uang cukup
                 for itemName, itemData in pairs(selectedItems) do
                     local stock = getShopStock(itemData.cat, itemName)
                     if stock > 0 and candyCorn >= itemData.price then
@@ -381,10 +564,9 @@ buyToggleBtn = createBtn(ShopSection, "▶️ Mulai Smart Auto-Buy", 210, C.succ
                     end
                 end
                 
-                -- 2. Eksekusi Pembelian
                 if itemToBuy then
                     if statusBuyLbl and statusBuyLbl.Parent then
-                        statusBuyLbl.Text = string.format("🛒 Membeli %s (Sisa CC: %d)", itemToBuy.name, candyCorn)
+                        statusBuyLbl.Text = string.format("🛒 Membeli %s (CC: %d)", itemToBuy.name, candyCorn)
                         statusBuyLbl.TextColor3 = C.success
                     end
                     
@@ -392,9 +574,10 @@ buyToggleBtn = createBtn(ShopSection, "▶️ Mulai Smart Auto-Buy", 210, C.succ
                         BuyRemote:FireServer(itemToBuy.name, itemToBuy.cat)
                     end)
                     
+                    -- [PATCH] Update stok di UI setelah beli
                     task.wait(0.5)
+                    renderList()
                 else
-                    -- 3. Jika tidak ada yang bisa dibeli (stok habis / miskin)
                     if statusBuyLbl and statusBuyLbl.Parent then
                         statusBuyLbl.Text = string.format("💤 Menunggu Stok/Restock... (CC: %d)", candyCorn)
                         statusBuyLbl.TextColor3 = C.textDim
