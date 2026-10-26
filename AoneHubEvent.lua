@@ -1,5 +1,5 @@
 -- ==================================================================
--- HALLOWEEN 2026 EVENT SCRIPT (Final - Auto Sell & Auto Buy)
+-- HALLOWEEN 2026 EVENT SCRIPT (Fixed Scope & Dynamic Shop)
 -- ==================================================================
 
 local Context = _G.AoneHub_Event_Context
@@ -223,17 +223,14 @@ ShopSection.Size = UDim2.new(1, -10, 0, 280)
 
 local isAutoBuying = false
 local buyThread = nil
-local selectedItems = {} -- Format: ["Nama Item"] = "Nama Kategori"
+local selectedItems = {} 
 
 local statusBuyLbl = createStatusLbl(ShopSection, "Pilih item di bawah, lalu klik Start.", 28, 30)
 
--- ==================================================================
 -- ⭐ FUNGSI DINAMIS: Mengambil Item Langsung dari Game
--- ==================================================================
 local function fetchShopItems()
     local items = {}
     
-    -- Path ke data Event Shop Halloween 2026
     local success, shopData = pcall(function()
         return require(ReplicatedStorage.Data.Events.Halloween2026Event.Halloween2026EventShopData)
     end)
@@ -243,20 +240,17 @@ local function fetchShopItems()
         return items
     end
 
-    -- Mapping nama tabel di data ke nama kategori yang diminta remote
     local categoryMap = {
         SeedShop = "Scary Seeds",
         PetShop = "Frightening Fauna",
         CosmeticShop = "Demonic Decor"
     }
 
-    -- Looping setiap kategori (Seed, Pet, Cosmetic)
     for dataKey, categoryName in pairs(categoryMap) do
         local categoryData = shopData[dataKey]
         
         if categoryData then
             for itemName, itemConfig in pairs(categoryData) do
-                -- Hanya ambil item yang ditampilkan di shop
                 if itemConfig.DisplayInShop then
                     table.insert(items, {
                         name = itemName,
@@ -269,7 +263,6 @@ local function fetchShopItems()
         end
     end
     
-    -- Urutkan berdasarkan harga termurah
     table.sort(items, function(a, b)
         return a.price < b.price
     end)
@@ -277,7 +270,6 @@ local function fetchShopItems()
     return items
 end
 
--- Panggil fungsi dan simpan ke variabel
 local SHOP_ITEMS = fetchShopItems()
 
 -- List Scroll untuk Item
@@ -306,7 +298,7 @@ local function renderItems()
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, -6, 0, 24)
         btn.BackgroundColor3 = isSelected and C.success or Color3.fromRGB(45, 45, 58)
-        btn.Text = string.format("[%s] %s (%s)", isSelected and "✓" or " ", item.name, item.cat)
+        btn.Text = string.format("[%s] %s (%s) - %d CC", isSelected and "✓" or " ", item.name, item.cat, item.price)
         btn.TextColor3 = C.text
         btn.Font = Enum.Font.Gotham
         btn.TextSize = 8
@@ -323,7 +315,7 @@ local function renderItems()
             if selectedItems[item.name] then
                 selectedItems[item.name] = nil
             else
-                selectedItems[item.name] = item -- Simpan seluruh data item (termasuk harga & kategori)
+                selectedItems[item.name] = item 
             end
             renderItems()
         end)
@@ -353,36 +345,39 @@ local function getCandyCorn()
     return 0
 end
 
--- Tombol Start/Stop Auto Buy
-local buyToggleBtn = createBtn(ShopSection, "▶️ Mulai Smart Auto-Buy", 210, C.success, function()
+-- [PATCH FIX] Deklarasi buyToggleBtn dipisah agar tidak error nil di dalam closure
+local buyToggleBtn
+buyToggleBtn = createBtn(ShopSection, "▶️ Mulai Smart Auto-Buy", 210, C.success, function()
     isAutoBuying = not isAutoBuying
     
     if isAutoBuying then
         local count = 0
         for _ in pairs(selectedItems) do count = count + 1 end
         if count == 0 then
-            statusBuyLbl.Text = "⚠️ Pilih minimal 1 item!"
-            statusBuyLbl.TextColor3 = C.danger
+            if statusBuyLbl and statusBuyLbl.Parent then
+                statusBuyLbl.Text = "⚠️ Pilih minimal 1 item!"
+                statusBuyLbl.TextColor3 = C.danger
+            end
             isAutoBuying = false
             return
         end
         
-        buyToggleBtn.Text = "⏹️ Stop Smart Auto-Buy"
-        buyToggleBtn.BackgroundColor3 = C.danger
+        if buyToggleBtn then 
+            buyToggleBtn.Text = "⏹️ Stop Smart Auto-Buy"
+            buyToggleBtn.BackgroundColor3 = C.danger
+        end
         
         buyThread = task.spawn(function()
             while isAutoBuying do
                 local candyCorn = getCandyCorn()
-                local boughtSomething = false
                 local itemToBuy = nil
                 
                 -- 1. Cari item yang dipilih DAN stoknya > 0 DAN uang cukup
                 for itemName, itemData in pairs(selectedItems) do
                     local stock = getShopStock(itemData.cat, itemName)
-                    
                     if stock > 0 and candyCorn >= itemData.price then
                         itemToBuy = itemData
-                        break -- Fokus beli satu per satu biar aman
+                        break 
                     end
                 end
                 
@@ -393,25 +388,26 @@ local buyToggleBtn = createBtn(ShopSection, "▶️ Mulai Smart Auto-Buy", 210, 
                         statusBuyLbl.TextColor3 = C.success
                     end
                     
-                    -- Tembak remote beli
                     pcall(function()
                         BuyRemote:FireServer(itemToBuy.name, itemToBuy.cat)
                     end)
                     
-                    task.wait(0.5) -- Jeda antar pembelian
+                    task.wait(0.5)
                 else
                     -- 3. Jika tidak ada yang bisa dibeli (stok habis / miskin)
                     if statusBuyLbl and statusBuyLbl.Parent then
                         statusBuyLbl.Text = string.format("💤 Menunggu Stok/Restock... (CC: %d)", candyCorn)
                         statusBuyLbl.TextColor3 = C.textDim
                     end
-                    task.wait(2) -- Cek ulang tiap 2 detik
+                    task.wait(2)
                 end
             end
         end)
     else
-        buyToggleBtn.Text = "▶️ Mulai Smart Auto-Buy"
-        buyToggleBtn.BackgroundColor3 = C.success
+        if buyToggleBtn then
+            buyToggleBtn.Text = "▶️ Mulai Smart Auto-Buy"
+            buyToggleBtn.BackgroundColor3 = C.success
+        end
         if buyThread then task.cancel(buyThread) end
         if statusBuyLbl and statusBuyLbl.Parent then
             statusBuyLbl.Text = "Status: Stopped."
