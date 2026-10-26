@@ -1,5 +1,5 @@
 -- ==================================================================
--- HALLOWEEN 2026 EVENT SCRIPT (Final - Attribute Listener)
+-- HALLOWEEN 2026 EVENT SCRIPT (Final - Fixed Nil & Cleanup)
 -- ==================================================================
 
 local Context = _G.AoneHub_Event_Context
@@ -19,6 +19,15 @@ local GetFarm = require(ReplicatedStorage.Modules.GetFarm)
 
 local GameEvents = ReplicatedStorage:WaitForChild("GameEvents")
 local SellRemote = GameEvents:WaitForChild("Events"):WaitForChild("Halloween2026Event"):WaitForChild("HalloweenSellInventoryRE")
+
+-- [PATCH] Tabel untuk menyimpan koneksi agar bisa dibersihkan
+local connections = {}
+
+-- [PATCH] Bersihkan script lama jika ada (mencegah bentrok)
+if _G.AoneHub_Event_Cleanup then
+    pcall(_G.AoneHub_Event_Cleanup)
+    _G.AoneHub_Event_Cleanup = nil
+end
 
 -- Helper UI
 local function createBtn(parent, text, yPos, color, callback)
@@ -59,10 +68,10 @@ local SellSection = createSection(Scroll, "🎃 Smart Auto-Sell", "eventAutoSell
 SellSection.LayoutOrder = 1
 SellSection.Size = UDim2.new(1, -10, 0, 130)
 
-local isEnabled = false            -- Apakah fitur aktif (dari tombol)
-local isHalloweenMode = false      -- Apakah pemain sedang di Halloween Garden
-local inventoryThread = nil        -- Thread khusus cek inventory
-local aoneHubOriginalState = true  -- Simpan status autoSell AoneHub
+local isEnabled = false            
+local isHalloweenMode = false      
+local inventoryThread = nil        
+local aoneHubOriginalState = true  
 
 local statusLbl = createStatusLbl(SellSection, "Status: Idle", 28, 30)
 
@@ -94,8 +103,10 @@ local function getSinisterCFrame()
 end
 
 local function doHalloweenSell()
-    statusLbl.Text = "⏳ Teleport ke Steven..."
-    statusLbl.TextColor3 = C.warning
+    if statusLbl and statusLbl.Parent then
+        statusLbl.Text = "⏳ Teleport ke Steven..."
+        statusLbl.TextColor3 = C.warning
+    end
     
     local char = Player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -103,19 +114,25 @@ local function doHalloweenSell()
     
     local stevenCFrame = getSinisterCFrame()
     if not stevenCFrame then
-        statusLbl.Text = "❌ Gagal temukan Steven!"
-        statusLbl.TextColor3 = C.danger
+        if statusLbl and statusLbl.Parent then
+            statusLbl.Text = "❌ Gagal temukan Steven!"
+            statusLbl.TextColor3 = C.danger
+        end
         return
     end
     
     pcall(function() TeleportPlayer(Player, stevenCFrame, "Sinister Sales") end)
     task.wait(2.5)
     
-    statusLbl.Text = "💰 Menjual..."
+    if statusLbl and statusLbl.Parent then
+        statusLbl.Text = "💰 Menjual..."
+    end
     SellRemote:FireServer()
     task.wait(3.5)
     
-    statusLbl.Text = "🔙 Kembali..."
+    if statusLbl and statusLbl.Parent then
+        statusLbl.Text = "🔙 Kembali..."
+    end
     if savedCFrame then
         pcall(function() TeleportPlayer(Player, savedCFrame, "Return") end)
     else
@@ -125,16 +142,21 @@ local function doHalloweenSell()
         end
     end
     task.wait(2)
-    statusLbl.Text = "✅ Selesai!"
-    statusLbl.TextColor3 = C.success
+    
+    if statusLbl and statusLbl.Parent then
+        statusLbl.Text = "✅ Selesai!"
+        statusLbl.TextColor3 = C.success
+    end
 end
 
--- ⭐ Thread yang HANYA berjalan saat di Halloween Garden
 local function startInventoryMonitor()
     if inventoryThread then task.cancel(inventoryThread) end
     
     inventoryThread = task.spawn(function()
         while isEnabled and isHalloweenMode do
+            -- [PATCH] Pastikan GUI masih ada sebelum update
+            if not (statusLbl and statusLbl.Parent) then break end
+            
             local curr, max = getFruitCapacity()
             statusLbl.Text = string.format("🎃 Halloween | 📦 %d/%d", curr, max)
             statusLbl.TextColor3 = C.text
@@ -143,7 +165,7 @@ local function startInventoryMonitor()
                 statusLbl.Text = "🚨 Penuh! Menjual..."
                 statusLbl.TextColor3 = C.danger
                 doHalloweenSell()
-                task.wait(5) -- Jeda setelah jual
+                task.wait(5)
             end
             
             task.wait(2)
@@ -158,8 +180,9 @@ local function stopInventoryMonitor()
     end
 end
 
--- ⭐ Fungsi Swap Mode (Dipanggil saat garden berubah)
 local function updateMode()
+    if not (statusLbl and statusLbl.Parent) then return end
+    
     local slot = Player:GetAttribute("SelectedSlot")
     local newHalloweenMode = (slot == "HALLOWEEN_2026")
     
@@ -168,21 +191,18 @@ local function updateMode()
         return
     end
     
-    -- Jika mode TIDAK berubah, tidak perlu apa-apa
     if isHalloweenMode == newHalloweenMode then return end
     isHalloweenMode = newHalloweenMode
     
     if isHalloweenMode then
-        -- 🎃 Masuk Halloween Mode
         if _G.AoneHub_SetAutoSellFruit then
-            _G.AoneHub_SetAutoSellFruit(false) -- Matikan saat di Halloween
+            _G.AoneHub_SetAutoSellFruit(false)
         end
         statusLbl.Text = "🎃 Mode Halloween aktif"
         startInventoryMonitor()
     else
-        -- 🌱 Masuk Normal Mode
         if _G.AoneHub_SetAutoSellFruit then
-            _G.AoneHub_SetAutoSellFruit(true) -- Nyalakan saat di Normal
+            _G.AoneHub_SetAutoSellFruit(true)
         end
         stopInventoryMonitor()
         statusLbl.Text = "🌱 Mode Normal: Auto-Sell AoneHub aktif"
@@ -190,33 +210,48 @@ local function updateMode()
     end
 end
 
--- ⭐ LISTENER UTAMA: Pantau perubahan garden secara real-time
-Player:GetAttributeChangedSignal("SelectedSlot"):Connect(function()
-    task.wait(0.5) -- Jeda agar map selesai load
+-- [PATCH] Simpan koneksi agar bisa diputus saat re-load
+local slotConnection = Player:GetAttributeChangedSignal("SelectedSlot"):Connect(function()
+    task.wait(0.5)
     updateMode()
 end)
+table.insert(connections, slotConnection)
 
--- ⭐ Tombol Toggle
-local toggleBtn = createBtn(SellSection, "▶️ Aktifkan Smart Auto-Sell", 60, C.success, function()
+-- [PATCH] Deklarasi toggleBtn dulu sebelum di-assign (mencegah error nil)
+local toggleBtn
+toggleBtn = createBtn(SellSection, "▶️ Aktifkan Smart Auto-Sell", 60, C.success, function()
     isEnabled = not isEnabled
     
     if isEnabled then
-        toggleBtn.Text = "⏹️ Matikan Smart Auto-Sell"
-        toggleBtn.BackgroundColor3 = C.danger
-        
-        -- Panggil updateMode untuk set state awal
+        if toggleBtn then
+            toggleBtn.Text = "⏹️ Matikan Smart Auto-Sell"
+            toggleBtn.BackgroundColor3 = C.danger
+        end
         updateMode()
     else
-        toggleBtn.Text = "▶️ Aktifkan Smart Auto-Sell"
-        toggleBtn.BackgroundColor3 = C.success
+        if toggleBtn then
+            toggleBtn.Text = "▶️ Aktifkan Smart Auto-Sell"
+            toggleBtn.BackgroundColor3 = C.success
+        end
         stopInventoryMonitor()
-        statusLbl.Text = "Status: Idle"
-        statusLbl.TextColor3 = C.textDim
+        if statusLbl and statusLbl.Parent then
+            statusLbl.Text = "Status: Idle"
+            statusLbl.TextColor3 = C.textDim
+        end
         
-        -- Kembalikan autoSell AoneHub
         if _G.AoneHub_Config and aoneHubOriginalState then
             _G.AoneHub_Config.autoSell = true
             if _G.AoneHub_SaveConfig then _G.AoneHub_SaveConfig() end
         end
     end
 end)
+
+-- [PATCH] Fungsi pembersih saat script di-reload atau GUI dihancurkan
+_G.AoneHub_Event_Cleanup = function()
+    isEnabled = false
+    stopInventoryMonitor()
+    for _, conn in ipairs(connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(connections)
+end
