@@ -600,27 +600,26 @@ buyToggleBtn = createBtn(ShopSection, "▶️ Mulai Smart Auto-Buy", 290, C.succ
 end)
 
 -- ==================================================================
--- BAGIAN 3: TRICK OR TREAT (AUTO KNOCK with SEPARATED STATUS)
+-- BAGIAN 3: TRICK OR TREAT (AUTO KNOCK + TELEPORT)
 -- ==================================================================
 local TrickSection = createSection(Scroll, "🎃 Trick or Treat (Auto Knock)", "eventTrick")
 TrickSection.LayoutOrder = 3
-TrickSection.Size = UDim2.new(1, -10, 0, 260) -- Diperbesar untuk 2 label
+TrickSection.Size = UDim2.new(1, -10, 0, 260) 
 
 local isTrickRunning = false
 local trickThread = nil
 local maxKnocks = 5 
+local currentAction = "Idle"
 
--- ⭐ LABEL 1: STATISTIK (Update tiap 1 detik)
 local statsLbl = createStatusLbl(TrickSection, "Memuat data...", 28, 45)
 statsLbl.TextColor3 = C.text
 
--- ⭐ LABEL 2: STATUS AKSI (Hanya update saat ada aksi)
 local actionLbl = createStatusLbl(TrickSection, "Status: Idle", 75, 20)
 actionLbl.TextColor3 = C.textDim
 
 local TrickRemote = GameEvents:WaitForChild("Events"):WaitForChild("Halloween2026Event"):WaitForChild("TrickOrTreating"):WaitForChild("Knock")
 
--- Input Max Knocks (Geser ke Y=105)
+-- Input Max Knocks
 local limitLbl = Instance.new("TextLabel")
 limitLbl.Size = UDim2.new(0.5, -10, 0, 20)
 limitLbl.Position = UDim2.new(0, 10, 0, 105)
@@ -663,17 +662,13 @@ end
 
 local function getTotalCost(targetMax)
     local total = 0
-    for i = 0, targetMax - 1 do
-        total = total + calculateCurrentPrice(i)
-    end
+    for i = 0, targetMax - 1 do total = total + calculateCurrentPrice(i) end
     return total
 end
 
 local function getRemainingCost(currentKnocks, targetMax)
     local total = 0
-    for i = currentKnocks, targetMax - 1 do
-        total = total + calculateCurrentPrice(i)
-    end
+    for i = currentKnocks, targetMax - 1 do total = total + calculateCurrentPrice(i) end
     return total
 end
 
@@ -693,7 +688,6 @@ local function getTrickData()
         local now = workspace:GetServerTimeNow()
         local resetAt = td.ResetAt or 0
         local knocks = td.Knocks or 0
-        
         if now >= resetAt then knocks = 0 end
         
         return {
@@ -705,7 +699,90 @@ local function getTrickData()
     return nil
 end
 
--- ⭐ LOOP UI STATISTIK (Hanya mengupdate statsLbl, tidak menyentuh actionLbl)
+-- ⭐ FUNGSI TELEPORT KE PINTU TRICK OR TREAT
+local function getTrickDoorCFrame()
+    local model = workspace:FindFirstChild("Interaction")
+    if model then model = model:FindFirstChild("TrickOrTreatingModel") end
+    if not model then return nil end
+
+    local door = model:FindFirstChild("Door", true)
+    if not (door and door:IsA("BasePart")) then return nil end
+
+    -- Hitung posisi 5 stud di depan pintu
+    local pos = door.Position + door.CFrame.LookVector * 5
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { Player.Character }
+    
+    -- Cari tanah
+    local ray = workspace:Raycast(pos + Vector3.new(0, 3, 0), Vector3.new(0, -20, 0), params)
+    local targetY = ray and (ray.Position.Y + 3) or pos.Y
+    local targetPos = Vector3.new(pos.X, targetY, pos.Z)
+
+    return CFrame.lookAt(targetPos, Vector3.new(door.Position.X, targetY, door.Position.Z))
+end
+
+-- ⭐ FUNGSI UTAMA KETOK PINTU
+local function doTrickOrTreatCycle()
+    local td = getTrickData()
+    if not td or td.knocks >= maxKnocks then return end
+    
+    local cc = getCandyCorn()
+    if cc < td.price then 
+        currentAction = "💤 Saldo kurang!"
+        return 
+    end
+    
+    -- 1. Simpan Posisi
+    local char = Player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local savedCFrame = hrp and hrp.CFrame
+
+    -- 2. Teleport ke Pintu
+    local doorCFrame = getTrickDoorCFrame()
+    if not doorCFrame then
+        currentAction = "❌ Pintu tidak ditemukan!"
+        return
+    end
+    
+    currentAction = "⏳ Teleport ke Pintu..."
+    pcall(function() TeleportPlayer(Player, doorCFrame, "TrickOrTreat") end)
+    task.wait(2.5) -- Tunggu loading
+
+    -- 3. Loop Ketok (selama masih di bawah max dan uang cukup)
+    while isTrickRunning do
+        td = getTrickData()
+        if not td or td.knocks >= maxKnocks then break end
+        cc = getCandyCorn()
+        
+        if cc < td.price then 
+            currentAction = "💤 Saldo kurang!"
+            break 
+        end
+
+        currentAction = string.format("🚪 Ngetok pintu ke-%d", td.knocks + 1)
+        pcall(function()
+            TrickRemote:InvokeServer({ExpectedPrice = td.price})
+        end)
+        task.wait(2) -- Tunggu animasi
+    end
+
+    -- 4. Teleport Balik
+    currentAction = "🔙 Kembali ke kebun..."
+    if savedCFrame then
+        pcall(function() TeleportPlayer(Player, savedCFrame, "Return") end)
+    else
+        local ok, farm = pcall(function() return GetFarm(Player) end)
+        if ok and farm and farm:FindFirstChild("Spawn_Point") then
+            pcall(function() TeleportPlayer(Player, farm.Spawn_Point.CFrame, "Farm") end)
+        end
+    end
+    task.wait(2)
+    
+    currentAction = "✅ Selesai."
+end
+
+-- LOOP UI STATISTIK (Hanya mengupdate statsLbl)
 task.spawn(function()
     while true do
         task.wait(1)
@@ -721,7 +798,6 @@ task.spawn(function()
                     td.knocks, maxKnocks, totalCost, cc, remainCost, formatTime(td.timeLeft)
                 )
                 
-                -- Warna stats
                 if td.knocks >= maxKnocks then
                     statsLbl.TextColor3 = C.warning
                 elseif cc < remainCost then
@@ -736,7 +812,26 @@ task.spawn(function()
     end
 end)
 
--- ⭐ TOMBOL TOGGLE & LOOP AKSI (Hanya mengupdate actionLbl)
+-- LOOP UI AKSI
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        if actionLbl and actionLbl.Parent then
+            actionLbl.Text = "Status: " .. currentAction
+            if currentAction:find("Ngetok") then
+                actionLbl.TextColor3 = C.success
+            elseif currentAction:find("kurang") or currentAction:find("❌") then
+                actionLbl.TextColor3 = C.danger
+            elseif currentAction:find("Teleport") or currentAction:find("Kembali") then
+                actionLbl.TextColor3 = C.warning
+            else
+                actionLbl.TextColor3 = C.textDim
+            end
+        end
+    end
+end)
+
+-- TOMBOL TOGGLE
 local trickToggleBtn
 trickToggleBtn = createBtn(TrickSection, "▶️ Mulai Auto Knock", 135, C.success, function()
     isTrickRunning = not isTrickRunning
@@ -750,35 +845,16 @@ trickToggleBtn = createBtn(TrickSection, "▶️ Mulai Auto Knock", 135, C.succe
         trickThread = task.spawn(function()
             while isTrickRunning do
                 local td = getTrickData()
-                if not td then task.wait(2) continue end
-                
-                if td.knocks >= maxKnocks then
-                    if actionLbl and actionLbl.Parent then
-                        actionLbl.Text = "Status: ⏳ Menunggu Reset (Batas tercapai)"
-                        actionLbl.TextColor3 = C.warning
-                    end
-                    task.wait(10) 
-                else
-                    local cc = getCandyCorn()
-                    
-                    if cc >= td.price then
-                        if actionLbl and actionLbl.Parent then
-                            actionLbl.Text = string.format("Status: 🚪 Ngetok pintu ke-%d", td.knocks + 1)
-                            actionLbl.TextColor3 = C.success
-                        end
-                        
-                        pcall(function()
-                            TrickRemote:InvokeServer({ExpectedPrice = td.price})
-                        end)
-                        
-                        task.wait(3.5)
+                if td then
+                    if td.knocks >= maxKnocks then
+                        currentAction = "⏳ Menunggu Reset..."
+                        task.wait(2)
                     else
-                        if actionLbl and actionLbl.Parent then
-                            actionLbl.Text = "Status: 💤 Saldo Candy Corn kurang!"
-                            actionLbl.TextColor3 = C.danger
-                        end
-                        task.wait(10)
+                        doTrickOrTreatCycle()
+                        task.wait(3) -- Jeda sebelum siklus berikutnya
                     end
+                else
+                    task.wait(2)
                 end
             end
         end)
@@ -788,10 +864,7 @@ trickToggleBtn = createBtn(TrickSection, "▶️ Mulai Auto Knock", 135, C.succe
             trickToggleBtn.BackgroundColor3 = C.success
         end
         if trickThread then task.cancel(trickThread) end
-        if actionLbl and actionLbl.Parent then
-            actionLbl.Text = "Status: Stopped."
-            actionLbl.TextColor3 = C.textDim
-        end
+        currentAction = "Stopped."
     end
 end)
 
