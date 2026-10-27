@@ -869,7 +869,7 @@ trickToggleBtn = createBtn(TrickSection, "▶️ Mulai Auto Knock", 135, C.succe
 end)
 
 -- ==================================================================
--- BAGIAN 4: BLACK CAT AUTO HARVESTER (OPTIMIZED SCAN)
+-- BAGIAN 4: BLACK CAT AUTO HARVESTER (SMART INVENTORY & GARDEN)
 -- ==================================================================
 local CatSection = createSection(Scroll, "🐈‍⬛ Black Cat Auto Harvester", "eventCat")
 CatSection.LayoutOrder = 4
@@ -904,10 +904,8 @@ local CatSubmitRE = GameEvents:WaitForChild("Events"):WaitForChild("Halloween202
 local function IsMyFruit(fruit)
     local ancestor = fruit:FindFirstAncestor("Important")
     if not ancestor then return false end
-
     local data = ancestor:FindFirstChild("Data")
     if not data then return false end
-
     local owner = data:FindFirstChild("Owner")
     if not owner or not owner.Value then return false end
     return owner.Value == Player.Name
@@ -915,21 +913,17 @@ end
 
 local function isFruitReady(fruit)
     if not fruit:HasTag("Harvestable") then return false end
-
     local grow = fruit:FindFirstChild("Grow")
     if not grow then return false end
     local ageValue = grow:FindFirstChild("Age")
     local maxAge = fruit:GetAttribute("MaxAge")
-
     if not ageValue or not maxAge then return false end
     return ageValue.Value >= maxAge
 end
 
--- CACHE BLACKLIST
 local ignoredFruits = setmetatable({}, {__mode = "k"})
 local IGNORE_TIME = 60
 
--- Fungsi ambil info buah
 local function getFruitInfo(fruit)
     if not fruit then return nil end
     local name = fruit.Name
@@ -951,19 +945,48 @@ local function getFruitInfo(fruit)
     }
 end
 
--- ⭐ MATCHER KHUSUS BLACK CAT (Mencocokkan info buah dengan Request)
+-- ⭐ FUNGSI CEK INVENTORY: Apakah buah ini sudah ada di tas?
+local function hasItemInInventory(req)
+    local data = DataService:GetData()
+    if not data or not data.InventoryData then return false end
+    
+    local reqName = req.PLANT_NAME:lower()
+    local reqWeight = req.WEIGHT
+    local reqMut = req.MUTATION and req.MUTATION:lower() or nil
+    
+    for _, item in pairs(data.InventoryData) do
+        if item.ItemType == "Holdable" then
+            local itemName = (item.ItemName or item.Name or item.PlantName or "?"):lower()
+            
+            -- Cek nama (bisa mengandung nama request)
+            if itemName:find(reqName, 1, true) then
+                local w = item.BaseWeight or item.Weight or 0
+                if w >= reqWeight then
+                    if reqMut then
+                        local itemMut = item.MutationType or (item.ItemData and item.ItemData.MutationType) or "m"
+                        if itemMut:lower() == reqMut then
+                            return true
+                        end
+                    else
+                        return true -- Jika tidak butuh mutasi, lolos
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- ⭐ MATCHER: Pencocokan Mutasi (Jika request butuh mutasi, harus ada. Jika tidak, bebas)
 local function isRequestedByCat(info, requests)
     for _, req in ipairs(requests) do
-        -- 1. Cek Nama
         local nameMatch = info.name:lower() == req.PLANT_NAME:lower()
         if not nameMatch then
             nameMatch = info.name:lower():find(req.PLANT_NAME:lower(), 1, true) ~= nil
         end
         
-        -- 2. Cek Berat (Harus >= permintaan)
         local weightMatch = info.weight >= req.WEIGHT
         
-        -- 3. Cek Mutasi
         local mutMatch = true
         if req.MUTATION then
             mutMatch = false
@@ -974,7 +997,8 @@ local function isRequestedByCat(info, requests)
                 end
             end
         end
-        
+        -- Jika req.MUTATION nil, mutMatch tetap true (bebas mutasi apa saja)
+
         if nameMatch and weightMatch and mutMatch then
             return true
         end
@@ -982,7 +1006,7 @@ local function isRequestedByCat(info, requests)
     return false
 end
 
--- ⭐ FUNGSI SCAN FRUITS (Sesuai Kode Kamu)
+-- ⭐ FUNGSI SCAN FRUITS (Mencari buah yg belum ada di inventory)
 local function scanFruits(requests)
     local matched, allFound = {}, {}
     local currentTime = tick()
@@ -999,7 +1023,6 @@ local function scanFruits(requests)
             if info and info.name ~= "" then
                 table.insert(allFound, info)
             
-                -- Filter: Harus matang & diminta oleh kucing
                 if isFruitReady(fruit) and isRequestedByCat(info, requests) then
                     table.insert(matched, info)
                     ignoredFruits[fruit] = nil
@@ -1076,32 +1099,47 @@ catToggleBtn = createBtn(CatSection, "▶️ Mulai Collect untuk Kucing", 125, C
                     continue
                 end
                 
-                -- 1. Scan menggunakan fungsi baru (Cache & Tagged)
-                local matched, _ = scanFruits(requests)
-                
-                -- 2. Eksekusi Panen
-                if #matched > 0 then
-                    catAction = string.format("🔄 Memanen %d buah...", #matched)
-                    
-                    local instances = {}
-                    for _, info in ipairs(matched) do
-                        table.insert(instances, info.instance)
+                -- 1. CEK INVENTORY: Filter request yang belum ada di tas
+                local missingRequests = {}
+                for _, req in ipairs(requests) do
+                    if not hasItemInInventory(req) then
+                        table.insert(missingRequests, req)
                     end
-                    
-                    pcall(function()
-                        CropsCollectRE:FireServer(instances)
-                    end)
-                    task.wait(2) -- Tunggu panen selesai
-                    
-                    -- 3. Auto Submit ke Kucing
+                end
+                
+                local harvestedSomething = false
+                
+                -- 2. Jika ada yang kurang, scan kebun hanya untuk yang kurang
+                if #missingRequests > 0 then
+                    local matched, _ = scanFruits(missingRequests)
+                    if #matched > 0 then
+                        catAction = string.format("🔄 Memanen %d buah...", #matched)
+                        
+                        local instances = {}
+                        for _, info in ipairs(matched) do
+                            table.insert(instances, info.instance)
+                        end
+                        
+                        pcall(function()
+                            CropsCollectRE:FireServer(instances)
+                        end)
+                        task.wait(2) -- Tunggu inventory sinkron
+                        harvestedSomething = true
+                    end
+                end
+                
+                -- 3. EKSEKUSI SUBMIT
+                -- Jika kita baru panen, ATAU semua request sudah ada di inventory
+                if harvestedSomething or #missingRequests == 0 then
                     catAction = "🐾 Submit ke Kucing..."
                     local token = math.random(100000, 999999)
                     pcall(function()
                         CatSubmitRE:FireServer({Token = token, Mode = "All"})
                     end)
-                    task.wait(3) -- Tunggu kucing makan
+                    task.wait(3) -- Tunggu kucing makan & request berubah
                 else
-                    catAction = "⏳ Menunggu buah matang..."
+                    -- Jika belum panen dan masih ada yang kurang (buah masih tumbuh)
+                    catAction = "⏳ Menunggu buah di kebun matang..."
                     task.wait(3)
                 end
             end
@@ -1126,8 +1164,6 @@ task.spawn(function()
                 catStatusLbl.TextColor3 = C.success
             elseif catAction:find("⏳") then
                 catStatusLbl.TextColor3 = C.warning
-            elseif catAction:find("❌") then
-                catStatusLbl.TextColor3 = C.danger
             else
                 catStatusLbl.TextColor3 = C.textDim
             end
