@@ -898,6 +898,35 @@ end)
 local CropsCollectRE = GameEvents:WaitForChild("Crops"):WaitForChild("Collect")
 local CatSubmitRE = GameEvents:WaitForChild("Events"):WaitForChild("Halloween2026Event"):WaitForChild("HalloweenHungry"):WaitForChild("Submit")
 
+-- ⭐ AMBIL SUMBER DATA YANG SAMA DENGAN AONEHUB
+local KNOWN_FRUITS = {}
+local KNOWN_MUTATIONS = {}
+
+-- Load Fruits dari PlantTraitsData
+pcall(function()
+    local fruitData = require(ReplicatedStorage.Modules.PlantTraitsData.Fruit)
+    if fruitData and fruitData.Plants then
+        for _, name in ipairs(fruitData.Plants) do
+            KNOWN_FRUITS[name:lower()] = name
+        end
+    end
+end)
+
+-- Load Mutations dari MutationHandler
+pcall(function()
+    local MutationHandler = require(ReplicatedStorage.Modules.MutationHandler)
+    if MutationHandler then
+        local success, mutations = pcall(function()
+            return MutationHandler:GetMutations()
+        end)
+        if success and mutations then
+            for name, _ in pairs(mutations) do
+                KNOWN_MUTATIONS[name] = true
+            end
+        end
+    end
+end)
+
 -- =====================================================
 -- FUNGSI HELPER (Sesuai Kode Kamu)
 -- =====================================================
@@ -924,14 +953,16 @@ end
 local ignoredFruits = setmetatable({}, {__mode = "k"})
 local IGNORE_TIME = 60
 
+-- ⭐ FUNGSI GET FRUIT INFO (Filter Mutasi pakai KNOWN_MUTATIONS)
 local function getFruitInfo(fruit)
     if not fruit then return nil end
     local name = fruit.Name
     local weight = tonumber(fruit:GetAttribute("Weight")) or tonumber(fruit:GetAttribute("BaseWeight")) or 0
     
+    -- [PERBAIKAN] Hanya anggap mutasi jika namanya ada di KNOWN_MUTATIONS
     local mutationList = {}
     for attrName, attrValue in pairs(fruit:GetAttributes()) do
-        if attrValue == true then
+        if attrValue == true and KNOWN_MUTATIONS[attrName] then
             table.insert(mutationList, attrName)
         end
     end
@@ -958,7 +989,6 @@ local function hasItemInInventory(req)
         if item.ItemType == "Holdable" then
             local itemName = (item.ItemName or item.Name or item.PlantName or "?"):lower()
             
-            -- Cek nama (bisa mengandung nama request)
             if itemName:find(reqName, 1, true) then
                 local w = item.BaseWeight or item.Weight or 0
                 if w >= reqWeight then
@@ -968,7 +998,7 @@ local function hasItemInInventory(req)
                             return true
                         end
                     else
-                        return true -- Jika tidak butuh mutasi, lolos
+                        return true
                     end
                 end
             end
@@ -977,12 +1007,13 @@ local function hasItemInInventory(req)
     return false
 end
 
--- ⭐ MATCHER: Pencocokan Mutasi (Jika request butuh mutasi, harus ada. Jika tidak, bebas)
+-- ⭐ MATCHER: Pencocokan Mutasi yang sudah diperbaiki
 local function isRequestedByCat(info, requests)
     for _, req in ipairs(requests) do
-        local nameMatch = info.name:lower() == req.PLANT_NAME:lower()
+        local reqName = req.PLANT_NAME:lower()
+        local nameMatch = info.name:lower() == reqName
         if not nameMatch then
-            nameMatch = info.name:lower():find(req.PLANT_NAME:lower(), 1, true) ~= nil
+            nameMatch = info.name:lower():find(reqName, 1, true) ~= nil
         end
         
         local weightMatch = info.weight >= req.WEIGHT
@@ -997,7 +1028,6 @@ local function isRequestedByCat(info, requests)
                 end
             end
         end
-        -- Jika req.MUTATION nil, mutMatch tetap true (bebas mutasi apa saja)
 
         if nameMatch and weightMatch and mutMatch then
             return true
@@ -1006,7 +1036,7 @@ local function isRequestedByCat(info, requests)
     return false
 end
 
--- ⭐ FUNGSI SCAN FRUITS (Mencari buah yg belum ada di inventory)
+-- ⭐ FUNGSI SCAN FRUITS
 local function scanFruits(requests)
     local matched, allFound = {}, {}
     local currentTime = tick()
@@ -1099,7 +1129,7 @@ catToggleBtn = createBtn(CatSection, "▶️ Mulai Collect untuk Kucing", 125, C
                     continue
                 end
                 
-                -- 1. CEK INVENTORY: Filter request yang belum ada di tas
+                -- 1. Cek inventory, filter request yang belum ada
                 local missingRequests = {}
                 for _, req in ipairs(requests) do
                     if not hasItemInInventory(req) then
@@ -1109,7 +1139,7 @@ catToggleBtn = createBtn(CatSection, "▶️ Mulai Collect untuk Kucing", 125, C
                 
                 local harvestedSomething = false
                 
-                -- 2. Jika ada yang kurang, scan kebun hanya untuk yang kurang
+                -- 2. Scan & panen hanya yang kurang
                 if #missingRequests > 0 then
                     local matched, _ = scanFruits(missingRequests)
                     if #matched > 0 then
@@ -1123,22 +1153,20 @@ catToggleBtn = createBtn(CatSection, "▶️ Mulai Collect untuk Kucing", 125, C
                         pcall(function()
                             CropsCollectRE:FireServer(instances)
                         end)
-                        task.wait(2) -- Tunggu inventory sinkron
+                        task.wait(2)
                         harvestedSomething = true
                     end
                 end
                 
-                -- 3. EKSEKUSI SUBMIT
-                -- Jika kita baru panen, ATAU semua request sudah ada di inventory
+                -- 3. Submit
                 if harvestedSomething or #missingRequests == 0 then
                     catAction = "🐾 Submit ke Kucing..."
                     local token = math.random(100000, 999999)
                     pcall(function()
                         CatSubmitRE:FireServer({Token = token, Mode = "All"})
                     end)
-                    task.wait(3) -- Tunggu kucing makan & request berubah
+                    task.wait(3)
                 else
-                    -- Jika belum panen dan masih ada yang kurang (buah masih tumbuh)
                     catAction = "⏳ Menunggu buah di kebun matang..."
                     task.wait(3)
                 end
