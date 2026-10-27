@@ -599,6 +599,191 @@ buyToggleBtn = createBtn(ShopSection, "▶️ Mulai Smart Auto-Buy", 290, C.succ
     end
 end)
 
+-- ==================================================================
+-- BAGIAN 3: TRICK OR TREAT (AUTO KNOCK with LIMIT)
+-- ==================================================================
+local TrickSection = createSection(Scroll, "🎃 Trick or Treat (Auto Knock)", "eventTrick")
+TrickSection.LayoutOrder = 3
+TrickSection.Size = UDim2.new(1, -10, 0, 200) -- Diperbesar untuk input
+
+local isTrickRunning = false
+local trickThread = nil
+local maxKnocks = 5 -- Default batas ketok
+
+local statusTrickLbl = createStatusLbl(TrickSection, "Status: Idle", 28, 40)
+statusTrickLbl.TextColor3 = C.text
+
+local TrickRemote = GameEvents:WaitForChild("Events"):WaitForChild("Halloween2026Event"):WaitForChild("TrickOrTreating"):WaitForChild("Knock")
+
+-- Input Max Knocks
+local limitLbl = Instance.new("TextLabel")
+limitLbl.Size = UDim2.new(0.5, -10, 0, 20)
+limitLbl.Position = UDim2.new(0, 10, 0, 75)
+limitLbl.BackgroundTransparency = 1
+limitLbl.Text = "Max Ketok / Reset:"
+limitLbl.TextColor3 = C.textDim
+limitLbl.Font = Enum.Font.Gotham
+limitLbl.TextSize = 9
+limitLbl.TextXAlignment = Enum.TextXAlignment.Left
+limitLbl.Parent = TrickSection
+
+local limitInput = Instance.new("TextBox")
+limitInput.Size = UDim2.new(0.5, -10, 0, 22)
+limitInput.Position = UDim2.new(0.5, 0, 0, 74)
+limitInput.BackgroundColor3 = C.input
+limitInput.BorderSizePixel = 0
+limitInput.Font = Enum.Font.GothamBold
+limitInput.Text = tostring(maxKnocks)
+limitInput.TextColor3 = C.text
+limitInput.TextSize = 9
+limitInput.Parent = TrickSection
+Instance.new("UICorner", limitInput).CornerRadius = UDim.new(0, 3)
+
+limitInput.FocusLost:Connect(function()
+    local n = tonumber(limitInput.Text)
+    if n and n >= 1 and n <= 50 then
+        maxKnocks = math.floor(n)
+    end
+    limitInput.Text = tostring(maxKnocks)
+end)
+
+-- Fungsi hitung harga persis seperti di game
+local function calculateCurrentPrice(knocks)
+    local basePrice = 10
+    local growth = 2
+    local roundTo = 5
+    local rawPrice = basePrice * (growth ^ knocks) / roundTo + 0.5
+    return math.floor(rawPrice) * roundTo
+end
+
+-- Fungsi format waktu
+local function formatTime(seconds)
+    local h = math.floor(seconds / 3600)
+    local m = math.floor((seconds % 3600) / 60)
+    local s = math.floor(seconds % 60)
+    if h > 0 then return string.format("%dj %dm %ds", h, m, s)
+    elseif m > 0 then return string.format("%dm %ds", m, s)
+    else return string.format("%ds", s) end
+end
+
+-- Fungsi ambil data Trick or Treat
+local function getTrickData()
+    local data = DataService:GetData()
+    if data and data.TrickOrTreatingData then
+        local td = data.TrickOrTreatingData
+        local now = workspace:GetServerTimeNow()
+        local resetAt = td.ResetAt or 0
+        local knocks = td.Knocks or 0
+        
+        if now >= resetAt then knocks = 0 end -- Reset alami
+        
+        return {
+            knocks = knocks,
+            price = calculateCurrentPrice(knocks),
+            timeLeft = math.max(0, resetAt - now)
+        }
+    end
+    return nil
+end
+
+-- Fungsi update UI (dipanggil setiap detik)
+local function updateTrickUI()
+    if not (statusTrickLbl and statusTrickLbl.Parent) then return end
+    
+    local td = getTrickData()
+    if not td then
+        statusTrickLbl.Text = "❌ Gagal membaca data."
+        return
+    end
+    
+    local cc = getCandyCorn()
+    local canAfford = cc >= td.price
+    
+    -- Tampilkan perbandingan Ketok (x/max) dan Harga vs Saldo
+    statusTrickLbl.Text = string.format(
+        "🚪 Knocks: %d/%d | 💵 Harga: %d CC | 💰 Saldo: %d CC\n🔄 Reset dalam: %s",
+        td.knocks, maxKnocks, td.price, cc, formatTime(td.timeLeft)
+    )
+    
+    if td.knocks >= maxKnocks then
+        statusTrickLbl.TextColor3 = C.warning -- Kuning jika sudah limit
+    elseif not canAfford then
+        statusTrickLbl.TextColor3 = C.danger -- Merah jika miskin
+    else
+        statusTrickLbl.TextColor3 = C.text -- Putih jika aman
+    end
+end
+
+-- Thread UI Loop
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if statusTrickLbl and statusTrickLbl.Parent then
+            updateTrickUI()
+        else
+            break
+        end
+    end
+end)
+
+-- Tombol Toggle
+local trickToggleBtn
+trickToggleBtn = createBtn(TrickSection, "▶️ Mulai Auto Knock", 105, C.success, function()
+    isTrickRunning = not isTrickRunning
+    
+    if isTrickRunning then
+        if trickToggleBtn then
+            trickToggleBtn.Text = "⏹️ Stop Auto Knock"
+            trickToggleBtn.BackgroundColor3 = C.danger
+        end
+        
+        trickThread = task.spawn(function()
+            while isTrickRunning do
+                local td = getTrickData()
+                if not td then task.wait(2) continue end
+                
+                -- LOGIKA UTAMA: Cek apakah sudah mencapai batas maxKnocks
+                if td.knocks >= maxKnocks then
+                    if statusTrickLbl and statusTrickLbl.Parent then
+                        statusTrickLbl.Text = string.format("⏳ Batas ketok tercapai! Menunggu reset (%s)...", formatTime(td.timeLeft))
+                        statusTrickLbl.TextColor3 = C.warning
+                    end
+                    task.wait(2) -- Diam dan tunggu reset
+                else
+                    -- Belum mencapai batas, coba ketok
+                    local cc = getCandyCorn()
+                    if cc >= td.price then
+                        if statusTrickLbl and statusTrickLbl.Parent then
+                            statusTrickLbl.Text = string.format("🚪 Ngetok pintu (%d/%d)...", td.knocks + 1, maxKnocks)
+                            statusTrickLbl.TextColor3 = C.success
+                        end
+                        
+                        pcall(function()
+                            TrickRemote:InvokeServer({ExpectedPrice = td.price})
+                        end)
+                        
+                        task.wait(2) -- Tunggu animasi pintu selesai
+                    else
+                        if statusTrickLbl and statusTrickLbl.Parent then
+                            statusTrickLbl.Text = "💤 Saldo Candy Corn tidak cukup!"
+                            statusTrickLbl.TextColor3 = C.danger
+                        end
+                        task.wait(2)
+                    end
+                end
+            end
+        end)
+    else
+        if trickToggleBtn then
+            trickToggleBtn.Text = "▶️ Mulai Auto Knock"
+            trickToggleBtn.BackgroundColor3 = C.success
+        end
+        if trickThread then task.cancel(trickThread) end
+        if statusTrickLbl and statusTrickLbl.Parent then
+            statusTrickLbl.Text = "Status: Stopped."
+        end
+    end
+end)
 
 -- [PATCH] Fungsi pembersih saat script di-reload atau GUI dihancurkan
 _G.AoneHub_Event_Cleanup = function()
