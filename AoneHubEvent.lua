@@ -873,9 +873,10 @@ end)
 -- ==================================================================
 local CatSection = createSection(Scroll, "🐈‍⬛ Black Cat Auto Harvester", "eventCat")
 CatSection.LayoutOrder = 4
-CatSection.Size = UDim2.new(1, -10, 0, 210)
+CatSection.Size = UDim2.new(1, -10, 0, 250)
 
 local isCatRunning = false
+local autoSellOnFullCat = false
 local catThread = nil
 local catAction = "Idle"
 
@@ -898,38 +899,114 @@ end)
 local CropsCollectRE = GameEvents:WaitForChild("Crops"):WaitForChild("Collect")
 local CatSubmitRE = GameEvents:WaitForChild("Events"):WaitForChild("Halloween2026Event"):WaitForChild("HalloweenHungry"):WaitForChild("Submit")
 
--- ⭐ AMBIL SUMBER DATA YANG SAMA DENGAN AONEHUB
+-- ==================================================================
+-- HELPER DATA BUAH & MUTASI (Sesuai Kode Kamu)
+-- ==================================================================
 local KNOWN_FRUITS = {}
 local KNOWN_MUTATIONS = {}
 
--- Load Fruits dari PlantTraitsData
-pcall(function()
-    local fruitData = require(ReplicatedStorage.Modules.PlantTraitsData.Fruit)
-    if fruitData and fruitData.Plants then
-        for _, name in ipairs(fruitData.Plants) do
-            KNOWN_FRUITS[name:lower()] = name
+local function loadMutationList()
+    local ok, MutationHandler = pcall(function() return require(ReplicatedStorage.Modules.MutationHandler) end)
+    if ok and MutationHandler then
+        local success, mutations = pcall(function() return MutationHandler:GetMutations() end)
+        if success and mutations then
+            for name, _ in pairs(mutations) do KNOWN_MUTATIONS[name] = true end
+            return
         end
     end
-end)
+    local FALLBACK = {
+        "Glimmering","Wet","Chilled","Frozen","Gold","Rainbow",
+        "Diamond","Silver","Bronze","Disco","Gilded","Enchanted",
+        "Shocked","Fried","Molten","Vamp","Ghostly","Volcanic",
+        "Flaming","Blazing","Infernal","Corrupt","Toxic","Acidic",
+        "Cosmic","Astral","Abyssal","Stormbound","Riptide","Grim",
+    }
+    for _, name in ipairs(FALLBACK) do KNOWN_MUTATIONS[name] = true end
+end
 
--- Load Mutations dari MutationHandler
-pcall(function()
-    local MutationHandler = require(ReplicatedStorage.Modules.MutationHandler)
-    if MutationHandler then
-        local success, mutations = pcall(function()
-            return MutationHandler:GetMutations()
-        end)
-        if success and mutations then
-            for name, _ in pairs(mutations) do
-                KNOWN_MUTATIONS[name] = true
+local function loadFruitList()
+    local names, seen = {}, {}
+    local SeedData_local = nil
+    pcall(function() SeedData_local = require(ReplicatedStorage.Data.SeedData) end)
+    if SeedData_local then
+        for name, _ in pairs(SeedData_local) do
+            if not seen[name] then seen[name] = true; table.insert(names, name) end
+        end
+    end
+    if #names == 0 then
+        for _, f in ipairs(CollectionService:GetTagged("Harvestable")) do
+            if f:IsA("Model") and not seen[f.Name] then seen[f.Name] = true; table.insert(names, f.Name) end
+        end
+    end
+    for _, fruitName in ipairs(names) do KNOWN_FRUITS[fruitName:lower()] = fruitName end
+end
+
+loadMutationList()
+loadFruitList()
+
+local function getFruitCapacity()
+    if not DataService then return 0, 0 end
+    local data = DataService:GetData()
+    if not data or not data.InventoryData then return 0, 0 end
+    local count = 0
+    for _, item in pairs(data.InventoryData) do
+        if item.ItemType == "Holdable" then count = count + 1 end
+    end
+    local bonus = Player:GetAttribute("BonusBackpackSize") or 0
+    return count, 200 + bonus
+end
+
+local function getFruitInfo(fruit)
+    if not fruit then return nil end
+    local name = fruit.Name
+    local weight = 0
+    local w1 = fruit:GetAttribute("Weight")
+    local w2 = fruit:GetAttribute("BaseWeight")
+    if w1 then weight = tonumber(w1) or 0
+    elseif w2 then weight = tonumber(w2) or 0 end
+
+    if weight == 0 then
+        for _, child in ipairs(fruit:GetChildren()) do
+            if child:IsA("NumberValue") or child:IsA("IntValue") then
+                local cn = child.Name:lower()
+                if cn:find("weight") or cn:find("value") then
+                    weight = tonumber(child.Value) or 0
+                    break
+                end
             end
         end
     end
-end)
 
--- =====================================================
--- FUNGSI HELPER (Sesuai Kode Kamu)
--- =====================================================
+    local mutationList = {}
+    for attrName, attrValue in pairs(fruit:GetAttributes()) do
+        if attrValue == true and KNOWN_MUTATIONS[attrName] then
+            table.insert(mutationList, attrName)
+        end
+    end
+    table.sort(mutationList)
+
+    return {
+        instance = fruit,
+        name = name,
+        weight = weight,
+        mutationList = mutationList,
+        mutationStr = #mutationList > 0 and table.concat(mutationList, ","):lower() or "",
+    }
+end
+
+local function isFruit(object)
+    if not object or not object:IsA("Model") then return false end
+    local nameLower = object.Name:lower()
+    if KNOWN_FRUITS[nameLower] then return true end
+    for fruitLower, _ in pairs(KNOWN_FRUITS) do
+        if nameLower:find(fruitLower, 1, true) then return true end
+    end
+    return false
+end
+
+-- ==================================================================
+-- HELPER SCAN KHUSUS BLACK CAT
+-- ==================================================================
 local function IsMyFruit(fruit)
     local ancestor = fruit:FindFirstAncestor("Important")
     if not ancestor then return false end
@@ -953,76 +1030,24 @@ end
 local ignoredFruits = setmetatable({}, {__mode = "k"})
 local IGNORE_TIME = 60
 
--- ⭐ FUNGSI GET FRUIT INFO (Filter Mutasi pakai KNOWN_MUTATIONS)
-local function getFruitInfo(fruit)
-    if not fruit then return nil end
-    local name = fruit.Name
-    local weight = tonumber(fruit:GetAttribute("Weight")) or tonumber(fruit:GetAttribute("BaseWeight")) or 0
-    
-    -- [PERBAIKAN] Hanya anggap mutasi jika namanya ada di KNOWN_MUTATIONS
-    local mutationList = {}
-    for attrName, attrValue in pairs(fruit:GetAttributes()) do
-        if attrValue == true and KNOWN_MUTATIONS[attrName] then
-            table.insert(mutationList, attrName)
-        end
-    end
-    table.sort(mutationList)
-
-    return {
-        instance = fruit,
-        name = name,
-        weight = weight,
-        mutationList = mutationList,
-    }
-end
-
--- ⭐ FUNGSI CEK INVENTORY: Apakah buah ini sudah ada di tas?
-local function hasItemInInventory(req)
-    local data = DataService:GetData()
-    if not data or not data.InventoryData then return false end
-    
-    local reqName = req.PLANT_NAME:lower()
-    local reqWeight = req.WEIGHT
-    local reqMut = req.MUTATION and req.MUTATION:lower() or nil
-    
-    for _, item in pairs(data.InventoryData) do
-        if item.ItemType == "Holdable" then
-            local itemName = (item.ItemName or item.Name or item.PlantName or "?"):lower()
-            
-            if itemName:find(reqName, 1, true) then
-                local w = item.BaseWeight or item.Weight or 0
-                if w >= reqWeight then
-                    if reqMut then
-                        local itemMut = item.MutationType or (item.ItemData and item.ItemData.MutationType) or "m"
-                        if itemMut:lower() == reqMut then
-                            return true
-                        end
-                    else
-                        return true
-                    end
-                end
-            end
-        end
-    end
-    return false
-end
-
--- ⭐ MATCHER: Pencocokan Mutasi yang sudah diperbaiki
-local function isRequestedByCat(info, requests)
+-- Matcher yang mencocokkan info buah dengan Request Black Cat
+local function isRequestedByCat(fruitInfo, requests)
     for _, req in ipairs(requests) do
-        local reqName = req.PLANT_NAME:lower()
-        local nameMatch = info.name:lower() == reqName
+        local nameMatch = fruitInfo.name:lower() == req.PLANT_NAME:lower()
         if not nameMatch then
-            nameMatch = info.name:lower():find(reqName, 1, true) ~= nil
+            nameMatch = fruitInfo.name:lower():find(req.PLANT_NAME:lower(), 1, true) ~= nil
         end
         
-        local weightMatch = info.weight >= req.WEIGHT
+        local weightMatch = fruitInfo.weight >= req.WEIGHT
         
+        -- Logika Mutasi: Jika req.MUTATION kosong (nil), bebas mutasi. 
+        -- Jika req.MUTATION ada, buah harus punya mutasi tersebut.
         local mutMatch = true
         if req.MUTATION then
             mutMatch = false
-            for _, m in ipairs(info.mutationList) do
-                if m:lower() == req.MUTATION:lower() then
+            local reqMutLower = req.MUTATION:lower()
+            for _, m in ipairs(fruitInfo.mutationList) do
+                if m:lower() == reqMutLower then
                     mutMatch = true
                     break
                 end
@@ -1036,13 +1061,12 @@ local function isRequestedByCat(info, requests)
     return false
 end
 
--- ⭐ FUNGSI SCAN FRUITS
 local function scanFruits(requests)
     local matched, allFound = {}, {}
     local currentTime = tick()
 
     for _, fruit in ipairs(CollectionService:GetTagged("Harvestable")) do
-        if fruit:IsA("Model") and IsMyFruit(fruit) then
+        if fruit:IsA("Model") and IsMyFruit(fruit) and isFruit(fruit) then
             local cachedData = ignoredFruits[fruit]
             if cachedData and (currentTime - cachedData.time) < IGNORE_TIME then
                 table.insert(allFound, cachedData.info)
@@ -1065,9 +1089,9 @@ local function scanFruits(requests)
     return matched, allFound
 end
 
--- =====================================================
--- LOGIKA UTAMA
--- =====================================================
+-- ==================================================================
+-- LOGIKA UTAMA KUCING
+-- ==================================================================
 local function getCatRequests()
     if not HungryController then return {} end
     local success, progress = pcall(function()
@@ -1109,9 +1133,21 @@ task.spawn(function()
     end
 end)
 
--- Tombol Toggle
+-- Tombol Auto Sell Toggle
+local sellToggleBtn = createBtn(CatSection, "💰 Auto Sell when Full: OFF", 115, Color3.fromRGB(70, 70, 85), function()
+    autoSellOnFullCat = not autoSellOnFullCat
+    if autoSellOnFullCat then
+        sellToggleBtn.Text = "💰 Auto Sell when Full: ON"
+        sellToggleBtn.BackgroundColor3 = C.success
+    else
+        sellToggleBtn.Text = "💰 Auto Sell when Full: OFF"
+        sellToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 85)
+    end
+end)
+
+-- Tombol Toggle Main
 local catToggleBtn
-catToggleBtn = createBtn(CatSection, "▶️ Mulai Collect untuk Kucing", 125, C.success, function()
+catToggleBtn = createBtn(CatSection, "▶️ Mulai Collect untuk Kucing", 145, C.success, function()
     isCatRunning = not isCatRunning
     
     if isCatRunning then
@@ -1122,6 +1158,29 @@ catToggleBtn = createBtn(CatSection, "▶️ Mulai Collect untuk Kucing", 125, C
         
         catThread = task.spawn(function()
             while isCatRunning do
+                -- 1. Cek apakah di Halloween Garden
+                if Player:GetAttribute("SelectedSlot") ~= "HALLOWEEN_2026" then
+                    catAction = "❌ Harus di Halloween Garden!"
+                    task.wait(2)
+                    continue
+                end
+
+                -- 2. Cek Kapasitas Inventory
+                local current, max = getFruitCapacity()
+                if current >= max then
+                    if autoSellOnFullCat then
+                        catAction = "🚨 Inventory Penuh! Menjual..."
+                        -- Memanggil fungsi auto-sell dari BAGIAN 1
+                        doHalloweenSell() 
+                        task.wait(3) -- Beri waktu setelah jual
+                    else
+                        catAction = string.format("🚨 Inventory Penuh (%d/%d)! Auto Sell OFF.", current, max)
+                        task.wait(3)
+                    end
+                    continue
+                end
+
+                -- 3. Baca Request Kucing
                 local requests = getCatRequests()
                 if #requests == 0 then
                     catAction = "⏳ Menunggu kucing lapar..."
@@ -1129,37 +1188,26 @@ catToggleBtn = createBtn(CatSection, "▶️ Mulai Collect untuk Kucing", 125, C
                     continue
                 end
                 
-                -- 1. Cek inventory, filter request yang belum ada
-                local missingRequests = {}
-                for _, req in ipairs(requests) do
-                    if not hasItemInInventory(req) then
-                        table.insert(missingRequests, req)
-                    end
-                end
-                
+                -- 4. Scan dan Panen
+                local matched, _ = scanFruits(requests)
                 local harvestedSomething = false
                 
-                -- 2. Scan & panen hanya yang kurang
-                if #missingRequests > 0 then
-                    local matched, _ = scanFruits(missingRequests)
-                    if #matched > 0 then
-                        catAction = string.format("🔄 Memanen %d buah...", #matched)
-                        
-                        local instances = {}
-                        for _, info in ipairs(matched) do
-                            table.insert(instances, info.instance)
-                        end
-                        
-                        pcall(function()
-                            CropsCollectRE:FireServer(instances)
-                        end)
-                        task.wait(2)
-                        harvestedSomething = true
+                if #matched > 0 then
+                    catAction = string.format("🔄 Memanen %d buah...", #matched)
+                    local instances = {}
+                    for _, info in ipairs(matched) do
+                        table.insert(instances, info.instance)
                     end
+                    
+                    pcall(function()
+                        CropsCollectRE:FireServer(instances)
+                    end)
+                    task.wait(2)
+                    harvestedSomething = true
                 end
                 
-                -- 3. Submit
-                if harvestedSomething or #missingRequests == 0 then
+                -- 5. Submit
+                if harvestedSomething then
                     catAction = "🐾 Submit ke Kucing..."
                     local token = math.random(100000, 999999)
                     pcall(function()
@@ -1167,7 +1215,7 @@ catToggleBtn = createBtn(CatSection, "▶️ Mulai Collect untuk Kucing", 125, C
                     end)
                     task.wait(3)
                 else
-                    catAction = "⏳ Menunggu buah di kebun matang..."
+                    catAction = "⏳ Menunggu buah matang..."
                     task.wait(3)
                 end
             end
@@ -1192,6 +1240,8 @@ task.spawn(function()
                 catStatusLbl.TextColor3 = C.success
             elseif catAction:find("⏳") then
                 catStatusLbl.TextColor3 = C.warning
+            elseif catAction:find("❌") or catAction:find("Penuh") then
+                catStatusLbl.TextColor3 = C.danger
             else
                 catStatusLbl.TextColor3 = C.textDim
             end
