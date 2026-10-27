@@ -868,6 +868,273 @@ trickToggleBtn = createBtn(TrickSection, "▶️ Mulai Auto Knock", 135, C.succe
     end
 end)
 
+-- ==================================================================
+-- BAGIAN 4: BLACK CAT AUTO HARVESTER (OPTIMIZED SCAN)
+-- ==================================================================
+local CatSection = createSection(Scroll, "🐈‍⬛ Black Cat Auto Harvester", "eventCat")
+CatSection.LayoutOrder = 4
+CatSection.Size = UDim2.new(1, -10, 0, 210)
+
+local isCatRunning = false
+local catThread = nil
+local catAction = "Idle"
+
+local catStatsLbl = createStatusLbl(CatSection, "Memuat request...", 28, 45)
+catStatsLbl.TextColor3 = C.text
+
+local catStatusLbl = createStatusLbl(CatSection, "Status: Idle", 75, 20)
+catStatusLbl.TextColor3 = C.textDim
+
+local warnLbl = createStatusLbl(CatSection, "⚠️ Matikan Auto Collect di Tab Farm!", 100, 14)
+warnLbl.TextColor3 = C.warning
+
+-- Services & Modules
+local CollectionService = game:GetService("CollectionService")
+local HungryController = nil
+pcall(function()
+    HungryController = require(ReplicatedStorage.Modules.Events.Halloween2026Event.HalloweenHungryController)
+end)
+
+local CropsCollectRE = GameEvents:WaitForChild("Crops"):WaitForChild("Collect")
+local CatSubmitRE = GameEvents:WaitForChild("Events"):WaitForChild("Halloween2026Event"):WaitForChild("HalloweenHungry"):WaitForChild("Submit")
+
+-- =====================================================
+-- FUNGSI HELPER (Sesuai Kode Kamu)
+-- =====================================================
+local function IsMyFruit(fruit)
+    local ancestor = fruit:FindFirstAncestor("Important")
+    if not ancestor then return false end
+
+    local data = ancestor:FindFirstChild("Data")
+    if not data then return false end
+
+    local owner = data:FindFirstChild("Owner")
+    if not owner or not owner.Value then return false end
+    return owner.Value == Player.Name
+end
+
+local function isFruitReady(fruit)
+    if not fruit:HasTag("Harvestable") then return false end
+
+    local grow = fruit:FindFirstChild("Grow")
+    if not grow then return false end
+    local ageValue = grow:FindFirstChild("Age")
+    local maxAge = fruit:GetAttribute("MaxAge")
+
+    if not ageValue or not maxAge then return false end
+    return ageValue.Value >= maxAge
+end
+
+-- CACHE BLACKLIST
+local ignoredFruits = setmetatable({}, {__mode = "k"})
+local IGNORE_TIME = 60
+
+-- Fungsi ambil info buah
+local function getFruitInfo(fruit)
+    if not fruit then return nil end
+    local name = fruit.Name
+    local weight = tonumber(fruit:GetAttribute("Weight")) or tonumber(fruit:GetAttribute("BaseWeight")) or 0
+    
+    local mutationList = {}
+    for attrName, attrValue in pairs(fruit:GetAttributes()) do
+        if attrValue == true then
+            table.insert(mutationList, attrName)
+        end
+    end
+    table.sort(mutationList)
+
+    return {
+        instance = fruit,
+        name = name,
+        weight = weight,
+        mutationList = mutationList,
+    }
+end
+
+-- ⭐ MATCHER KHUSUS BLACK CAT (Mencocokkan info buah dengan Request)
+local function isRequestedByCat(info, requests)
+    for _, req in ipairs(requests) do
+        -- 1. Cek Nama
+        local nameMatch = info.name:lower() == req.PLANT_NAME:lower()
+        if not nameMatch then
+            nameMatch = info.name:lower():find(req.PLANT_NAME:lower(), 1, true) ~= nil
+        end
+        
+        -- 2. Cek Berat (Harus >= permintaan)
+        local weightMatch = info.weight >= req.WEIGHT
+        
+        -- 3. Cek Mutasi
+        local mutMatch = true
+        if req.MUTATION then
+            mutMatch = false
+            for _, m in ipairs(info.mutationList) do
+                if m:lower() == req.MUTATION:lower() then
+                    mutMatch = true
+                    break
+                end
+            end
+        end
+        
+        if nameMatch and weightMatch and mutMatch then
+            return true
+        end
+    end
+    return false
+end
+
+-- ⭐ FUNGSI SCAN FRUITS (Sesuai Kode Kamu)
+local function scanFruits(requests)
+    local matched, allFound = {}, {}
+    local currentTime = tick()
+
+    for _, fruit in ipairs(CollectionService:GetTagged("Harvestable")) do
+        if fruit:IsA("Model") and IsMyFruit(fruit) then
+            local cachedData = ignoredFruits[fruit]
+            if cachedData and (currentTime - cachedData.time) < IGNORE_TIME then
+                table.insert(allFound, cachedData.info)
+                continue
+            end
+        
+            local info = getFruitInfo(fruit)
+            if info and info.name ~= "" then
+                table.insert(allFound, info)
+            
+                -- Filter: Harus matang & diminta oleh kucing
+                if isFruitReady(fruit) and isRequestedByCat(info, requests) then
+                    table.insert(matched, info)
+                    ignoredFruits[fruit] = nil
+                else
+                    ignoredFruits[fruit] = { time = currentTime, info = info } 
+                end
+            end
+        end
+    end
+    return matched, allFound
+end
+
+-- =====================================================
+-- LOGIKA UTAMA
+-- =====================================================
+local function getCatRequests()
+    if not HungryController then return {} end
+    local success, progress = pcall(function()
+        return HungryController:GetProgress()
+    end)
+    if success and progress and progress.Remaining then
+        return progress.Remaining
+    end
+    return {}
+end
+
+local function updateCatStats()
+    if not (catStatsLbl and catStatsLbl.Parent) then return end
+    local requests = getCatRequests()
+    
+    if #requests == 0 then
+        catStatsLbl.Text = "✅ Semua request terpenuhi! Kucing kenyang."
+        catStatsLbl.TextColor3 = C.success
+        return
+    end
+    
+    local text = "🎯 Request Kucing:\n"
+    for i, req in ipairs(requests) do
+        local mut = req.MUTATION and ("["..req.MUTATION.."] ") or ""
+        text = text .. string.format("%d. %s%s (%.2fkg+)\n", i, mut, req.PLANT_NAME, req.WEIGHT)
+    end
+    catStatsLbl.Text = text
+    catStatsLbl.TextColor3 = C.text
+end
+
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if catStatsLbl and catStatsLbl.Parent then
+            updateCatStats()
+        else
+            break
+        end
+    end
+end)
+
+-- Tombol Toggle
+local catToggleBtn
+catToggleBtn = createBtn(CatSection, "▶️ Mulai Collect untuk Kucing", 125, C.success, function()
+    isCatRunning = not isCatRunning
+    
+    if isCatRunning then
+        if catToggleBtn then
+            catToggleBtn.Text = "⏹️ Stop Auto Harvester"
+            catToggleBtn.BackgroundColor3 = C.danger
+        end
+        
+        catThread = task.spawn(function()
+            while isCatRunning do
+                local requests = getCatRequests()
+                if #requests == 0 then
+                    catAction = "⏳ Menunggu kucing lapar..."
+                    task.wait(5)
+                    continue
+                end
+                
+                -- 1. Scan menggunakan fungsi baru (Cache & Tagged)
+                local matched, _ = scanFruits(requests)
+                
+                -- 2. Eksekusi Panen
+                if #matched > 0 then
+                    catAction = string.format("🔄 Memanen %d buah...", #matched)
+                    
+                    local instances = {}
+                    for _, info in ipairs(matched) do
+                        table.insert(instances, info.instance)
+                    end
+                    
+                    pcall(function()
+                        CropsCollectRE:FireServer(instances)
+                    end)
+                    task.wait(2) -- Tunggu panen selesai
+                    
+                    -- 3. Auto Submit ke Kucing
+                    catAction = "🐾 Submit ke Kucing..."
+                    local token = math.random(100000, 999999)
+                    pcall(function()
+                        CatSubmitRE:FireServer({Token = token, Mode = "All"})
+                    end)
+                    task.wait(3) -- Tunggu kucing makan
+                else
+                    catAction = "⏳ Menunggu buah matang..."
+                    task.wait(3)
+                end
+            end
+        end)
+    else
+        if catToggleBtn then
+            catToggleBtn.Text = "▶️ Mulai Collect untuk Kucing"
+            catToggleBtn.BackgroundColor3 = C.success
+        end
+        if catThread then task.cancel(catThread) end
+        catAction = "Stopped."
+    end
+end)
+
+-- Loop UI Aksi
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        if catStatusLbl and catStatusLbl.Parent then
+            catStatusLbl.Text = "Status: " .. catAction
+            if catAction:find("Memotong") or catAction:find("Panen") or catAction:find("Submit") then
+                catStatusLbl.TextColor3 = C.success
+            elseif catAction:find("⏳") then
+                catStatusLbl.TextColor3 = C.warning
+            elseif catAction:find("❌") then
+                catStatusLbl.TextColor3 = C.danger
+            else
+                catStatusLbl.TextColor3 = C.textDim
+            end
+        end
+    end
+end)
+
 -- [PATCH] Fungsi pembersih saat script di-reload atau GUI dihancurkan
 _G.AoneHub_Event_Cleanup = function()
     isSellEnabled = false
