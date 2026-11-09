@@ -1,5 +1,5 @@
 -- ==================================================================
--- ANUBIS EVENT SCRIPT (AoneHub Style UI) - PHASE 1
+-- ANUBIS EVENT SCRIPT (AoneHub Style UI) - PHASE 1 (UPDATED)
 -- ==================================================================
 
 local Context = _G.AoneHub_Event_Context
@@ -15,6 +15,8 @@ local Player = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
 
 local DataService = require(ReplicatedStorage.Modules.DataService)
+local TeleportPlayer = require(ReplicatedStorage.Modules.TeleportPlayer)
+local GetFarm = require(ReplicatedStorage.Modules.GetFarm)
 
 -- ==================================================================
 -- [PATCH] CLEANUP & ANTI-BENTROK
@@ -27,7 +29,7 @@ if _G.AoneHub_Event_Cleanup then
 end
 
 -- ==================================================================
--- HELPER UI
+-- HELPER UI & DATA
 -- ==================================================================
 local function createBtn(parent, text, yPos, color, callback)
     local btn = Instance.new("TextButton")
@@ -68,6 +70,17 @@ local function formatTime(seconds)
     else return string.format("%02d:%02d", m, s) end
 end
 
+local function getFruitCapacity()
+    local data = DataService:GetData()
+    if not data or not data.InventoryData then return 0, 0 end
+    local count = 0
+    for _, item in pairs(data.InventoryData) do
+        if item.ItemType == "Holdable" then count = count + 1 end
+    end
+    local bonus = Player:GetAttribute("BonusBackpackSize") or 0
+    return count, 200 + bonus
+end
+
 -- ==================================================================
 -- DEPENDENCIES & REMOTES
 -- ==================================================================
@@ -83,12 +96,25 @@ local GameEvents = ReplicatedStorage:WaitForChild("GameEvents")
 local AnubisSellRemote = GameEvents:WaitForChild("Events"):WaitForChild("AnubisEvent"):WaitForChild("AnubisCoinsSell"):WaitForChild("Sell")
 local BuyShopRemote = GameEvents:WaitForChild("BuyEventShopStock")
 
+-- ⭐ FUNGSI DETEKSI TRAIT
+local function getActiveTrait()
+    local wsTrait = Workspace:GetAttribute("AncientArcConfig")
+    if type(wsTrait) == "string" then return wsTrait end
+    if type(wsTrait) == "table" and wsTrait.Trait then return wsTrait.Trait end
+    
+    local TRAIT_OPTIONS = {"Berry", "Fruit", "Flower", "Vegetable", "Tropical", "Prickly", "Woody", "Leafy", "Stalky", "Root", "Sweet", "Sour"}
+    local timeSinceEpoch = Workspace:GetServerTimeNow() - (AncientArcConfig.TRAIT_EPOCH or 0)
+    local switchCount = math.floor(timeSinceEpoch / (AncientArcConfig.TRAIT_SWITCH_TIMER or 1800))
+    local traitIndex = (switchCount + (AncientArcConfig.TRAIT_SEED or 104729)) % #TRAIT_OPTIONS + 1
+    return TRAIT_OPTIONS[traitIndex]
+end
+
 -- ==================================================================
 -- FITUR 1: TRACKER & DUNESTORM TIMER
 -- ==================================================================
 local TrackerSection = createSection(Scroll, "📊 Anubis Event Tracker", "anubisTracker")
 TrackerSection.LayoutOrder = 1
-TrackerSection.Size = UDim2.new(1, -10, 0, 180)
+TrackerSection.Size = UDim2.new(1, -10, 0, 195)
 
 local stormStatusLbl = createStatusLbl(TrackerSection, "🌪️ DuneStorm: Loading...", 28, 14)
 stormStatusLbl.TextColor3 = C.warning
@@ -96,10 +122,14 @@ stormStatusLbl.TextColor3 = C.warning
 local arcStatusLbl = createStatusLbl(TrackerSection, "⛏️ Archaeology: Loading...", 45, 30)
 arcStatusLbl.TextColor3 = C.text
 
-local rewardStatusLbl = createStatusLbl(TrackerSection, "🎁 Reward: ...", 80, 20)
+local traitStatusLbl = createStatusLbl(TrackerSection, "🎯 Trait: ...", 80, 14)
+traitStatusLbl.TextColor3 = C.success
+traitStatusLbl.Font = Enum.Font.GothamBold
+
+local rewardStatusLbl = createStatusLbl(TrackerSection, "🎁 Reward: ...", 98, 20)
 rewardStatusLbl.TextColor3 = C.accent
 
-local coinStatusLbl = createStatusLbl(TrackerSection, "🪙 AnubisCoins: 0", 105, 20)
+local coinStatusLbl = createStatusLbl(TrackerSection, "🪙 AnubisCoins: 0", 125, 20)
 coinStatusLbl.TextColor3 = C.success
 coinStatusLbl.Font = Enum.Font.GothamBold
 
@@ -107,7 +137,6 @@ task.spawn(function()
     while TrackerSection and TrackerSection.Parent and not _G.AoneHub_IsDestroyed do
         task.wait(1)
 
-        -- 1. DuneStorm
         local isStorm = Workspace:GetAttribute("DuneStorm")
         local stormEnd = Workspace:GetAttribute("DuneStormTimer")
         local stormNext = Workspace:GetAttribute("DuneStormNextAt")
@@ -124,13 +153,13 @@ task.spawn(function()
             stormStatusLbl.TextColor3 = C.textDim
         end
 
-        -- 2. AnubisCoins
         local data = DataService:GetData()
         if data and data.SpecialCurrency then
             coinStatusLbl.Text = "🪙 AnubisCoins: " .. tostring(data.SpecialCurrency.AnubisCoins or 0)
         end
 
-        -- 3. Archaeology Progress
+        traitStatusLbl.Text = "🎯 Trait: " .. getActiveTrait()
+
         if AncientArcController then
             local ok, prog = pcall(function() return AncientArcController:GetProgress() end)
             if ok and prog then
@@ -154,15 +183,13 @@ task.spawn(function()
                 if prog.Reward then
                     rewardStatusLbl.Text = string.format("🎁 Reward: %s x%d", prog.Reward.Value or "?", prog.Reward.Quantity or 1)
                 end
-            else
-                arcStatusLbl.Text = "⛏️ Archaeology: Error read progress"
             end
         end
     end
 end)
 
 -- ==================================================================
--- FITUR 2: AUTO SUBMIT ARCHAEOLOGY
+-- FITUR 2: AUTO SUBMIT ARCHAEOLOGY (Dengan Anti-Spam)
 -- ==================================================================
 local SubmitSection = createSection(Scroll, "⛏️ Auto Submit Archaeology", "anubisSubmit")
 SubmitSection.LayoutOrder = 2
@@ -170,20 +197,17 @@ SubmitSection.Size = UDim2.new(1, -10, 0, 90)
 
 local isAutoSubmitRunning = false
 local submitStatus = createStatusLbl(SubmitSection, "Status: Idle", 28, 14)
+local nextSubmitTime = 0
 
--- ⭐ SANGAT PENTING: Counter sequence manual
 _G.AoneHub_AnubisSeq = _G.AoneHub_AnubisSeq or 0
 
 local function doAutoSubmit()
     if not AncientArcController then return end
+    if tick() < nextSubmitTime then return end -- ⭐ Anti-Spam Cooldown
     
     local okProg, prog = pcall(function() return AncientArcController:GetProgress() end)
-    if not okProg or not prog then return end
-    
-    -- Jangan submit kalau sudah Ready / Done
-    if prog.Ready or prog.Done then return end
+    if not okProg or not prog or prog.Ready or prog.Done then return end
 
-    -- Increment counter
     _G.AoneHub_AnubisSeq = _G.AoneHub_AnubisSeq + 1
     local currentSeq = _G.AoneHub_AnubisSeq
 
@@ -193,27 +217,28 @@ local function doAutoSubmit()
 
     if ok and res then
         if res.Success then
+            nextSubmitTime = 0
             if res.Reason == "Uncovered" then
                 submitStatus.Text = "Status: 🎉 Uncovered object!"
                 submitStatus.TextColor3 = C.success
             else
-                submitStatus.Text = string.format("Status: ✅ +%.2f kg (Seq: %d)", res.Added or 0, currentSeq)
+                submitStatus.Text = string.format("Status: ✅ +%.2f kg", res.Added or 0)
                 submitStatus.TextColor3 = C.success
             end
         else
-            -- Kalau gagal (misal: NoneFound / InvalidSeq)
-            if res.Reason == "NoneFound" then
-                submitStatus.Text = "Status: ⏳ Nunggu tanaman trait..."
+            if res.Reason == "NoneFound" or res.Reason == "NoPlant" then
+                submitStatus.Text = "Status: ⏳ Nunggu buah trait..."
                 submitStatus.TextColor3 = C.warning
-                _G.AoneHub_AnubisSeq = _G.AoneHub_AnubisSeq - 1 -- Rollback seq karena tidak ada yg disubmit
+                _G.AoneHub_AnubisSeq = _G.AoneHub_AnubisSeq - 1
+                nextSubmitTime = tick() + 10 -- ⭐ Tahan 10 detik agar tidak spam
             else
                 submitStatus.Text = "Status: ❌ " .. tostring(res.Reason)
                 submitStatus.TextColor3 = C.danger
+                nextSubmitTime = tick() + 5
             end
         end
     else
-        submitStatus.Text = "Status: ❌ Gagal (API Error)"
-        submitStatus.TextColor3 = C.danger
+        nextSubmitTime = tick() + 5
     end
 end
 
@@ -223,11 +248,10 @@ submitBtn = createBtn(SubmitSection, "▶️ Mulai Auto Submit", 50, C.success, 
     if isAutoSubmitRunning then
         submitBtn.Text = "⏹️ Stop Auto Submit"
         submitBtn.BackgroundColor3 = C.danger
-        
         task.spawn(function()
             while isAutoSubmitRunning and not _G.AoneHub_IsDestroyed do
                 doAutoSubmit()
-                task.wait(1.2) -- Cooldown aman (min 0.75s)
+                task.wait(1) -- Loop utama tetap jalan tiap 1 detik, cooldown ditangani di dalam fungsi
             end
             submitStatus.Text = "Status: Stopped"
             submitStatus.TextColor3 = C.textDim
@@ -239,39 +263,138 @@ submitBtn = createBtn(SubmitSection, "▶️ Mulai Auto Submit", 50, C.success, 
 end)
 
 -- ==================================================================
--- FITUR 3: AUTO SELL HIERO FRUITS
+-- FITUR 3: AUTO SELL ANUBIS (Mengambil alih Auto Sell Utama)
 -- ==================================================================
-local SellSection = createSection(Scroll, "🌾 Auto Sell Hiero Fruits", "anubisSell")
+local SellSection = createSection(Scroll, "🌾 Smart Auto Sell (Anubis)", "anubisSell")
 SellSection.LayoutOrder = 3
-SellSection.Size = UDim2.new(1, -10, 0, 90)
+SellSection.Size = UDim2.new(1, -10, 0, 130)
 
-local isAutoSellRunning = false
-local sellStatus = createStatusLbl(SellSection, "Status: Idle", 28, 14)
+local isSellEnabled = false
+local inventoryThread = nil
 
-local sellBtn
-sellBtn = createBtn(SellSection, "▶️ Mulai Auto Sell", 50, C.success, function()
-    isAutoSellRunning = not isAutoSellRunning
-    if isAutoSellRunning then
-        sellBtn.Text = "⏹️ Stop Auto Sell"
-        sellBtn.BackgroundColor3 = C.danger
-        
-        task.spawn(function()
-            while isAutoSellRunning and not _G.AoneHub_IsDestroyed do
-                -- Fire remote SellAll
-                pcall(function()
-                    AnubisSellRemote:FireServer("SellAll")
-                end)
-                sellStatus.Text = "Status: 🪙 Menjual buah hieroglyphic..."
-                sellStatus.TextColor3 = C.success
-                
-                task.wait(3) -- Jeda 3 detik antar jual
-            end
-            sellStatus.Text = "Status: Stopped"
-            sellStatus.TextColor3 = C.textDim
-        end)
+local statusSellLbl = createStatusLbl(SellSection, "Status: Idle", 28, 30)
+
+local function getTraderTinaCFrame()
+    local interaction = Workspace:FindFirstChild("Interaction")
+    local eventModel = interaction and interaction:FindFirstChild("AnubisEventModel")
+    local tina = eventModel and eventModel:FindFirstChild("Trader Tina")
+    local hrp = tina and tina:FindFirstChild("HumanoidRootPart")
+    if not (hrp and hrp:IsA("BasePart")) then return nil end
+    
+    local pos = hrp.Position + hrp.CFrame.LookVector * 5
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { Player.Character }
+    
+    local ray = Workspace:Raycast(pos + Vector3.new(0, 3, 0), Vector3.new(0, -20, 0), params)
+    local targetY = ray and (ray.Position.Y + 3) or pos.Y
+    return CFrame.lookAt(Vector3.new(pos.X, targetY, pos.Z), Vector3.new(hrp.Position.X, targetY, hrp.Position.Z))
+end
+
+local function doAnubisSell()
+    if not statusSellLbl or not statusSellLbl.Parent then return end
+    if not Player.Character or not Player.Character:FindFirstChild("HumanoidRootPart") then return end
+    
+    statusSellLbl.Text = "⏳ Teleport ke Trader Tina..."
+    statusSellLbl.TextColor3 = C.warning
+    
+    local hrp = Player.Character.HumanoidRootPart
+    local savedCFrame = hrp.CFrame
+    
+    local tinaCFrame = getTraderTinaCFrame()
+    if not tinaCFrame then
+        statusSellLbl.Text = "❌ Gagal temukan Trader Tina!"
+        statusSellLbl.TextColor3 = C.danger
+        return
+    end
+    
+    pcall(function() TeleportPlayer(Player, tinaCFrame, "Anubis Trader") end)
+    task.wait(2.5)
+    
+    if statusSellLbl and statusSellLbl.Parent then 
+        statusSellLbl.Text = "💰 Menjual buah..." 
+        statusSellLbl.TextColor3 = C.success
+    end
+    pcall(function() AnubisSellRemote:FireServer("SellAll") end)
+    task.wait(3.5)
+    
+    if statusSellLbl and statusSellLbl.Parent then 
+        statusSellLbl.Text = "🔙 Kembali ke kebun..." 
+        statusSellLbl.TextColor3 = C.warning
+    end
+    
+    if savedCFrame then
+        pcall(function() TeleportPlayer(Player, savedCFrame, "Return") end)
     else
-        sellBtn.Text = "▶️ Mulai Auto Sell"
-        sellBtn.BackgroundColor3 = C.success
+        local ok, farm = pcall(function() return GetFarm(Player) end)
+        if ok and farm and farm:FindFirstChild("Spawn_Point") then
+            pcall(function() TeleportPlayer(Player, farm.Spawn_Point.CFrame, "Farm") end)
+        end
+    end
+    task.wait(2)
+    
+    if statusSellLbl and statusSellLbl.Parent then
+        statusSellLbl.Text = "✅ Selesai!"
+        statusSellLbl.TextColor3 = C.success
+    end
+end
+
+local sellToggleBtn
+sellToggleBtn = createBtn(SellSection, "▶️ Aktifkan Smart Auto-Sell", 60, C.success, function()
+    isSellEnabled = not isSellEnabled
+    if isSellEnabled then
+        if sellToggleBtn then 
+            sellToggleBtn.Text = "⏹️ Matikan Smart Auto-Sell"
+            sellToggleBtn.BackgroundColor3 = C.danger 
+        end
+        
+        -- ⭐ Matikan auto sell utama AoneHub
+        if _G.AoneHub_SetAutoSellFruit then 
+            _G.AoneHub_SetAutoSellFruit(false) 
+        end
+        
+        statusSellLbl.Text = "🏺 Mode Anubis aktif (Trader Tina)"
+        statusSellLbl.TextColor3 = C.text
+        
+        -- Start Monitor Inventory
+        if inventoryThread then task.cancel(inventoryThread) end
+        inventoryThread = task.spawn(function()
+            while isSellEnabled and not _G.AoneHub_IsDestroyed do
+                if not (statusSellLbl and statusSellLbl.Parent) then break end
+                local curr, max = getFruitCapacity()
+                statusSellLbl.Text = string.format("🏺 Anubis | 📦 %d/%d", curr, max)
+                statusSellLbl.TextColor3 = C.text
+                
+                if curr >= max then
+                    statusSellLbl.Text = "🚨 Penuh! Menjual..."
+                    statusSellLbl.TextColor3 = C.danger
+                    doAnubisSell()
+                    task.wait(5)
+                end
+                task.wait(2)
+            end
+        end)
+        
+    else
+        if sellToggleBtn then 
+            sellToggleBtn.Text = "▶️ Aktifkan Smart Auto-Sell"
+            sellToggleBtn.BackgroundColor3 = C.success 
+        end
+        
+        if inventoryThread then 
+            task.cancel(inventoryThread)
+            inventoryThread = nil 
+        end
+        
+        -- ⭐ Nyalakan kembali auto sell utama AoneHub
+        if _G.AoneHub_SetAutoSellFruit then 
+            _G.AoneHub_SetAutoSellFruit(true) 
+        end
+        
+        if statusSellLbl and statusSellLbl.Parent then 
+            statusSellLbl.Text = "Status: Idle (Auto Sell Utama menyala)"
+            statusSellLbl.TextColor3 = C.textDim 
+        end
     end
 end)
 
@@ -285,13 +408,11 @@ BuySection.Size = UDim2.new(1, -10, 0, 320)
 local isAutoBuyRunning = false
 local buyStatus = createStatusLbl(BuySection, "Status: Idle", 28, 14)
 
--- Config penyimpanan item yang dipilih
 if _G.AoneHub_Config then
     _G.AoneHub_Config.anubisSelectedItems = _G.AoneHub_Config.anubisSelectedItems or {}
 end
 local selectedItems = _G.AoneHub_Config and _G.AoneHub_Config.anubisSelectedItems or {}
 
--- Scroll List Item
 local itemScroll = Instance.new("ScrollingFrame")
 itemScroll.Size = UDim2.new(1, -20, 0, 180)
 itemScroll.Position = UDim2.new(0, 10, 0, 50)
@@ -319,7 +440,6 @@ local function renderShopItems()
         table.insert(items, {Name = name, Config = config})
     end
     
-    -- Urutkan berdasarkan LayoutOrder
     table.sort(items, function(a, b)
         return (a.Config.LayoutOrder or 999) < (b.Config.LayoutOrder or 999)
     end)
@@ -332,16 +452,14 @@ local function renderShopItems()
         local cfg = item.Config
         local price = cfg.Price or 0
         
-        -- Cek stok
         local stock = 0
         if shopStock and shopStock.Stocks and shopStock.Stocks[name] then
             stock = shopStock.Stocks[name].Stock or 0
         end
         
-        -- Cek unlock (pura-pura unlock biar user tetap bisa pilih)
         local isLocked = cfg.LockedInShop 
-
         local isSel = selectedItems[name] == true
+        
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, -8, 0, 24)
         btn.BackgroundColor3 = isSel and Color3.fromRGB(60, 130, 220) or Color3.fromRGB(45, 45, 58)
@@ -402,7 +520,6 @@ local function renderShopItems()
 end
 
 renderShopItems()
--- Refresh UI tiap 5 detik buat update stok
 task.spawn(function()
     while BuySection and BuySection.Parent and not _G.AoneHub_IsDestroyed do
         task.wait(5)
@@ -426,15 +543,12 @@ buyBtn = createBtn(BuySection, "▶️ Mulai Auto Buy", 240, C.success, function
                 for name, _ in pairs(selectedItems) do
                     local cfg = AnubisShopData[name]
                     if cfg and coins >= (cfg.Price or 0) then
-                        -- Fire Remote
-                        pcall(function()
-                            BuyShopRemote:FireServer(name, "Anubis Coin Shop")
-                        end)
+                        pcall(function() BuyShopRemote:FireServer(name, "Anubis Coin Shop") end)
                         buyStatus.Text = string.format("Status: 🛒 Beli %s...", name)
                         buyStatus.TextColor3 = C.success
                         bought = true
-                        task.wait(1.5) -- Jeda antar beli
-                        break -- Ulangi loop untuk cek coins terbaru
+                        task.wait(1.5)
+                        break 
                     end
                 end
                 
@@ -458,10 +572,16 @@ end)
 -- ==================================================================
 _G.AoneHub_Event_Cleanup = function()
     isAutoSubmitRunning = false
-    isAutoSellRunning = false
+    isSellEnabled = false
     isAutoBuyRunning = false
+    if inventoryThread then task.cancel(inventoryThread) end
     for _, conn in ipairs(connections) do
         pcall(function() conn:Disconnect() end)
     end
     table.clear(connections)
+    
+    -- ⭐ Pastikan Auto Sell Utama nyala lagi kalau script di-reload
+    if _G.AoneHub_SetAutoSellFruit then 
+        _G.AoneHub_SetAutoSellFruit(true) 
+    end
 end
