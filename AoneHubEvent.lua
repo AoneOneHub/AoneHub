@@ -96,17 +96,26 @@ local GameEvents = ReplicatedStorage:WaitForChild("GameEvents")
 local AnubisSellRemote = GameEvents:WaitForChild("Events"):WaitForChild("AnubisEvent"):WaitForChild("AnubisCoinsSell"):WaitForChild("Sell")
 local BuyShopRemote = GameEvents:WaitForChild("BuyEventShopStock")
 
--- ⭐ FUNGSI DETEKSI TRAIT
+-- ⭐ FUNGSI DETEKSI TRAIT (Current & Next)
 local function getActiveTrait()
+    -- 1. Coba baca dari workspace attribute (jika server broadcast)
     local wsTrait = Workspace:GetAttribute("AncientArcConfig")
-    if type(wsTrait) == "string" then return wsTrait end
-    if type(wsTrait) == "table" and wsTrait.Trait then return wsTrait.Trait end
+    if type(wsTrait) == "string" then return wsTrait, "?" end
+    if type(wsTrait) == "table" and wsTrait.Trait then return wsTrait.Trait, "?" end
     
+    -- 2. Kalkulasi manual
     local TRAIT_OPTIONS = {"Berry", "Fruit", "Flower", "Vegetable", "Tropical", "Prickly", "Woody", "Leafy", "Stalky", "Root", "Sweet", "Sour"}
     local timeSinceEpoch = Workspace:GetServerTimeNow() - (AncientArcConfig.TRAIT_EPOCH or 0)
     local switchCount = math.floor(timeSinceEpoch / (AncientArcConfig.TRAIT_SWITCH_TIMER or 1800))
-    local traitIndex = (switchCount + (AncientArcConfig.TRAIT_SEED or 104729)) % #TRAIT_OPTIONS + 1
-    return TRAIT_OPTIONS[traitIndex]
+    local seed = AncientArcConfig.TRAIT_SEED or 104729
+    
+    -- Kalkulasi indeks "Next"
+    local nextIdx = ((switchCount + seed) % #TRAIT_OPTIONS) + 1
+    
+    -- Kalkulasi indeks "Current" (Mundur 1 langkah karena script terlalu cepat)
+    local currentIdx = (nextIdx - 2) % #TRAIT_OPTIONS + 1
+    
+    return TRAIT_OPTIONS[currentIdx], TRAIT_OPTIONS[nextIdx]
 end
 
 -- ==================================================================
@@ -122,11 +131,11 @@ stormStatusLbl.TextColor3 = C.warning
 local arcStatusLbl = createStatusLbl(TrackerSection, "⛏️ Archaeology: Loading...", 45, 30)
 arcStatusLbl.TextColor3 = C.text
 
-local traitStatusLbl = createStatusLbl(TrackerSection, "🎯 Trait: ...", 80, 14)
+local traitStatusLbl = createStatusLbl(TrackerSection, "🎯 Trait: ...", 78, 16)
 traitStatusLbl.TextColor3 = C.success
 traitStatusLbl.Font = Enum.Font.GothamBold
 
-local rewardStatusLbl = createStatusLbl(TrackerSection, "🎁 Reward: ...", 98, 20)
+local rewardStatusLbl = createStatusLbl(TrackerSection, "🎁 Reward: ...", 96, 20)
 rewardStatusLbl.TextColor3 = C.accent
 
 local coinStatusLbl = createStatusLbl(TrackerSection, "🪙 AnubisCoins: 0", 125, 20)
@@ -158,7 +167,9 @@ task.spawn(function()
             coinStatusLbl.Text = "🪙 AnubisCoins: " .. tostring(data.SpecialCurrency.AnubisCoins or 0)
         end
 
-        traitStatusLbl.Text = "🎯 Trait: " .. getActiveTrait()
+        -- ⭐ Update Trait (Current & Next)
+        local currentTrait, nextTrait = getActiveTrait()
+        traitStatusLbl.Text = string.format("🎯 Trait: %s | Next: %s", currentTrait, nextTrait)
 
         if AncientArcController then
             local ok, prog = pcall(function() return AncientArcController:GetProgress() end)
@@ -251,7 +262,7 @@ submitBtn = createBtn(SubmitSection, "▶️ Mulai Auto Submit", 50, C.success, 
         task.spawn(function()
             while isAutoSubmitRunning and not _G.AoneHub_IsDestroyed do
                 doAutoSubmit()
-                task.wait(1) -- Loop utama tetap jalan tiap 1 detik, cooldown ditangani di dalam fungsi
+                task.wait(1)
             end
             submitStatus.Text = "Status: Stopped"
             submitStatus.TextColor3 = C.textDim
@@ -286,7 +297,7 @@ local function getTraderTinaCFrame()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = { Player.Character }
     
-    local ray = Workspace:Raycast(pos + Vector3.new(0, 3, 0), Vector3.new(0, -20, 0), params)
+    local ray = Workspace:Raycast(pos + Vector3.new(0, 3, 0), Vector.new(0, -20, 0), params)
     local targetY = ray and (ray.Position.Y + 3) or pos.Y
     return CFrame.lookAt(Vector3.new(pos.X, targetY, pos.Z), Vector3.new(hrp.Position.X, targetY, hrp.Position.Z))
 end
