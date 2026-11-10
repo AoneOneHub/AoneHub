@@ -134,30 +134,31 @@ local GameEvents = ReplicatedStorage:WaitForChild("GameEvents")
 local AnubisSellRemote = GameEvents:WaitForChild("Events"):WaitForChild("AnubisEvent"):WaitForChild("AnubisCoinsSell"):WaitForChild("Sell")
 local BuyShopRemote = GameEvents:WaitForChild("BuyEventShopStock")
 
--- ⭐ FUNGSI DETEKSI TRAIT (Membaca langsung dari NPC)
+-- ⭐ FUNGSI DETEKSI TRAIT (Berdasarkan Path Terbaru)
 local function getActiveTrait()
-    -- 1. Coba baca dari Teks Billboard NPC Archie (Akurat 100%)
+    -- 1. Baca langsung dari ThoughtBubblePart di folder Important
     local interaction = Workspace:FindFirstChild("Interaction")
     local eventModel = interaction and interaction:FindFirstChild("AnubisEventModel")
     local arcModel = eventModel and eventModel:FindFirstChild("AncientArc")
-    local npc = arcModel and arcModel:FindFirstChild("Important") and arcModel.Important:FindFirstChild("NPC")
+    local important = arcModel and arcModel:FindFirstChild("Important")
     
-    if npc then
-        -- Cari ThoughtBubblePart
-        local bubble = npc:FindFirstChild("ThoughtBubblePart")
-        if not bubble then
-            -- Kalau tidak ketemu, coba cari di dalam descendant (jaga-jaga kalau letaknya beda)
-            bubble = npc:FindFirstChild("ThoughtBubblePart", true)
-        end
-        
+    if important then
+        local bubble = important:FindFirstChild("ThoughtBubblePart")
         if bubble then
-            local traitLabel = bubble:FindFirstChild("Trait", true)
-            if traitLabel and traitLabel:IsA("TextLabel") then
-                -- Teks aslinya: "Looking for <font color=...><b>Leafy</b></font> plants!"
-                -- Kita ambil kata di antara <b> dan </b>
-                local match = string.match(traitLabel.Text, "<b>(.-)</b>")
-                if match then
-                    return match, "?" -- "?" karena Next Trait tidak ditampilkan di UI
+            local target = bubble:FindFirstChild("Target")
+            local holder = target and target:FindFirstChild("Holder")
+            local traitObj = holder and holder:FindFirstChild("Trait")
+            
+            if traitObj then
+                -- Ambil teks dari ContentText (jika ada) atau properti Text biasa
+                local text = traitObj.ContentText or traitObj.Text
+                if text and type(text) == "string" then
+                    -- Format teks: "Looking for Vegetable plants!"
+                    -- Kita potong kata di antara "Looking for " dan " plants!"
+                    local match = string.match(text, "Looking for (.-) plants!")
+                    if match then
+                        return match, "?" -- Next trait tidak ditampilkan oleh server
+                    end
                 end
             end
         end
