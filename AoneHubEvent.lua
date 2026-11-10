@@ -1,5 +1,5 @@
 -- ==================================================================
--- ANUBIS EVENT SCRIPT (AoneHub Style UI) - PHASE 1 (FINAL)
+-- ANUBIS EVENT SCRIPT (AoneHub Style UI) - PHASE 1 (SEPARATED CONFIG)
 -- ==================================================================
 
 local Context = _G.AoneHub_Event_Context
@@ -13,6 +13,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local Player = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
 
 local DataService = require(ReplicatedStorage.Modules.DataService)
 local TeleportPlayer = require(ReplicatedStorage.Modules.TeleportPlayer)
@@ -27,6 +28,43 @@ if _G.AoneHub_Event_Cleanup then
     pcall(_G.AoneHub_Event_Cleanup)
     _G.AoneHub_Event_Cleanup = nil
 end
+
+-- ==================================================================
+-- [BARU] KONFIGURASI EVENT TERPISAH
+-- ==================================================================
+local EVENT_SAVE_DIR = "AoneHub"
+local EVENT_SAVE_FILE = EVENT_SAVE_DIR .. "/AoneHub_Event.json"
+
+pcall(function() makefolder(EVENT_SAVE_DIR) end)
+
+local EventConfig = {
+    anubisAutoSubmit = false,
+    anubisAutoSell = false,
+    anubisAutoBuy = false,
+    anubisAutoRestart = false,
+    anubisSelectedItems = {}
+}
+
+local function loadEventConfig()
+    local s, d = pcall(readfile, EVENT_SAVE_FILE)
+    if s and d then
+        local s2, loaded = pcall(HttpService.JSONDecode, HttpService, d)
+        if s2 and type(loaded) == "table" then
+            for k, v in pairs(loaded) do
+                EventConfig[k] = v
+            end
+        end
+    end
+end
+
+local function saveEventConfig()
+    local s, json = pcall(HttpService.JSONEncode, HttpService, EventConfig)
+    if s then 
+        pcall(writefile, EVENT_SAVE_FILE, json) 
+    end
+end
+
+loadEventConfig() -- Panggil saat script dimuat
 
 -- ==================================================================
 -- HELPER UI & DATA
@@ -233,20 +271,17 @@ local function doAutoSubmitCycle()
     local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    -- Simpan posisi asli
     local originalCFrame = hrp.CFrame
 
-    -- Teleport ke NPC
     submitStatus.Text = "Status: ⏳ Mendekati NPC..."
     submitStatus.TextColor3 = C.warning
     local npcCFrame = getArchieCFrame()
     
     if npcCFrame then
         pcall(function() TeleportPlayer(Player, npcCFrame, "Archie") end)
-        task.wait(1.5) -- Jeda loading
+        task.wait(1.5)
     end
 
-    -- Lakukan Submit Batch (Maksimal 3x submit per kedatangan)
     for i = 1, 3 do
         if not isAutoSubmitRunning then break end
         
@@ -262,7 +297,7 @@ local function doAutoSubmitCycle()
                 if res.Reason == "Uncovered" then
                     submitStatus.Text = "Status: 🎉 Uncovered object!"
                     submitStatus.TextColor3 = C.success
-                    break -- Berhenti kalau sudah uncover
+                    break
                 else
                     submitStatus.Text = string.format("Status: ✅ +%.2f kg", res.Added or 0)
                     submitStatus.TextColor3 = C.success
@@ -270,7 +305,7 @@ local function doAutoSubmitCycle()
             else
                 if res.Reason == "NoneFound" or res.Reason == "NoPlant" then
                     _G.AoneHub_AnubisSeq = _G.AoneHub_AnubisSeq - 1
-                    break -- Berhenti kalau buah habis
+                    break
                 else
                     break
                 end
@@ -278,10 +313,9 @@ local function doAutoSubmitCycle()
         else
             break
         end
-        task.wait(1) -- Jeda antar submit
+        task.wait(1)
     end
 
-    -- Kembali ke posisi asli
     submitStatus.Text = "Status: 🔙 Kembali ke kebun..."
     if originalCFrame then
         pcall(function() TeleportPlayer(Player, originalCFrame, "Return") end)
@@ -297,13 +331,17 @@ end
 local submitBtn
 submitBtn = createBtn(SubmitSection, "▶️ Mulai Auto Submit", 50, C.success, function()
     isAutoSubmitRunning = not isAutoSubmitRunning
+    
+    -- ⭐ Simpan ke Config Event
+    EventConfig.anubisAutoSubmit = isAutoSubmitRunning
+    saveEventConfig()
+    
     if isAutoSubmitRunning then
         submitBtn.Text = "⏹️ Stop Auto Submit"
         submitBtn.BackgroundColor3 = C.danger
         task.spawn(function()
             while isAutoSubmitRunning and not _G.AoneHub_IsDestroyed do
                 doAutoSubmitCycle()
-                -- Cooldown utama: jika kosong, nunggu 10 detik. Jika ada, langsung ulang.
                 task.wait(10) 
             end
             submitStatus.Text = "Status: Stopped"
@@ -395,6 +433,11 @@ end
 local sellToggleBtn
 sellToggleBtn = createBtn(SellSection, "▶️ Aktifkan Smart Auto-Sell", 60, C.success, function()
     isSellEnabled = not isSellEnabled
+    
+    -- ⭐ Simpan ke Config Event
+    EventConfig.anubisAutoSell = isSellEnabled
+    saveEventConfig()
+    
     if isSellEnabled then
         if sellToggleBtn then 
             sellToggleBtn.Text = "⏹️ Matikan Smart Auto-Sell"
@@ -458,10 +501,7 @@ BuySection.Size = UDim2.new(1, -10, 0, 320)
 local isAutoBuyRunning = false
 local buyStatus = createStatusLbl(BuySection, "Status: Idle", 28, 14)
 
-if _G.AoneHub_Config then
-    _G.AoneHub_Config.anubisSelectedItems = _G.AoneHub_Config.anubisSelectedItems or {}
-end
-local selectedItems = _G.AoneHub_Config and _G.AoneHub_Config.anubisSelectedItems or {}
+local selectedItems = EventConfig.anubisSelectedItems or {}
 
 local itemScroll = Instance.new("ScrollingFrame")
 itemScroll.Size = UDim2.new(1, -20, 0, 180)
@@ -497,7 +537,6 @@ local function renderShopItems()
     local data = DataService:GetData()
     local shopStock = data and data.EventShopStock and data.EventShopStock["Anubis Coin Shop"]
     
-    -- ⭐ Ambil data unlock
     local unlockedDict = {}
     if data and data.UnlockedEventShopItems then
         for _, itemName in ipairs(data.UnlockedEventShopItems) do
@@ -515,7 +554,6 @@ local function renderShopItems()
             stock = shopStock.Stocks[name].Stock or 0
         end
         
-        -- Cek lock: jika statis terkunci ATAU belum masuk daftar unlock
         local isLocked = cfg.LockedInShop and not unlockedDict[name]
         local isSel = selectedItems[name] == true
         
@@ -578,10 +616,11 @@ local function renderShopItems()
             else
                 selectedItems[name] = true
             end
-            if _G.AoneHub_Config then
-                _G.AoneHub_Config.anubisSelectedItems = selectedItems
-                if _G.AoneHub_SaveConfig then _G.AoneHub_SaveConfig() end
-            end
+            
+            -- ⭐ Simpan ke Config Event
+            EventConfig.anubisSelectedItems = selectedItems
+            saveEventConfig()
+            
             renderShopItems()
         end)
     end
@@ -598,6 +637,11 @@ end)
 local buyBtn
 buyBtn = createBtn(BuySection, "▶️ Mulai Auto Buy", 240, C.success, function()
     isAutoBuyRunning = not isAutoBuyRunning
+    
+    -- ⭐ Simpan ke Config Event
+    EventConfig.anubisAutoBuy = isAutoBuyRunning
+    saveEventConfig()
+    
     if isAutoBuyRunning then
         buyBtn.Text = "⏹️ Stop Auto Buy"
         buyBtn.BackgroundColor3 = C.danger
@@ -648,6 +692,11 @@ local restartStatus = createStatusLbl(RestartSection, "Status: Idle", 28, 14)
 local restartBtn
 restartBtn = createBtn(RestartSection, "▶️ Mulai Auto Restart", 50, C.success, function()
     isAutoRestartRunning = not isAutoRestartRunning
+    
+    -- ⭐ Simpan ke Config Event
+    EventConfig.anubisAutoRestart = isAutoRestartRunning
+    saveEventConfig()
+    
     if isAutoRestartRunning then
         restartBtn.Text = "⏹️ Stop Auto Restart"
         restartBtn.BackgroundColor3 = C.danger
@@ -689,6 +738,35 @@ restartBtn = createBtn(RestartSection, "▶️ Mulai Auto Restart", 50, C.succes
     else
         restartBtn.Text = "▶️ Mulai Auto Restart"
         restartBtn.BackgroundColor3 = C.success
+    end
+end)
+
+-- ==================================================================
+-- [BARU] AUTO-START CONFIG LOADER
+-- ==================================================================
+task.delay(3, function()
+    -- Auto Start Submit
+    if EventConfig.anubisAutoSubmit and not isAutoSubmitRunning then
+        print("[AoneHub] Auto-starting Anubis Submit...")
+        submitBtn.MouseButton1Click:Fire() 
+    end
+    
+    -- Auto Start Sell
+    if EventConfig.anubisAutoSell and not isSellEnabled then
+        print("[AoneHub] Auto-starting Anubis Sell...")
+        sellToggleBtn.MouseButton1Click:Fire()
+    end
+    
+    -- Auto Start Buy
+    if EventConfig.anubisAutoBuy and not isAutoBuyRunning then
+        print("[AoneHub] Auto-starting Anubis Buy...")
+        buyBtn.MouseButton1Click:Fire()
+    end
+    
+    -- Auto Start Restart
+    if EventConfig.anubisAutoRestart and not isAutoRestartRunning then
+        print("[AoneHub] Auto-starting Anubis Restart...")
+        restartBtn.MouseButton1Click:Fire()
     end
 end)
 
