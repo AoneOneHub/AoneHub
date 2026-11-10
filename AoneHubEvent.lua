@@ -134,21 +134,34 @@ local GameEvents = ReplicatedStorage:WaitForChild("GameEvents")
 local AnubisSellRemote = GameEvents:WaitForChild("Events"):WaitForChild("AnubisEvent"):WaitForChild("AnubisCoinsSell"):WaitForChild("Sell")
 local BuyShopRemote = GameEvents:WaitForChild("BuyEventShopStock")
 
--- ⭐ FUNGSI DETEKSI TRAIT (Current & Next)
+-- ⭐ FUNGSI DETEKSI TRAIT (Membaca langsung dari NPC)
 local function getActiveTrait()
-    local wsTrait = Workspace:GetAttribute("AncientArcConfig")
-    if type(wsTrait) == "string" then return wsTrait, "?" end
-    if type(wsTrait) == "table" and wsTrait.Trait then return wsTrait.Trait, "?" end
+    -- 1. Coba baca dari Teks Billboard NPC Archie (Akurat 100%)
+    local interaction = Workspace:FindFirstChild("Interaction")
+    local eventModel = interaction and interaction:FindFirstChild("AnubisEventModel")
+    local arcModel = eventModel and eventModel:FindFirstChild("AncientArc")
+    local npc = arcModel and arcModel:FindFirstChild("Important") and arcModel.Important:FindFirstChild("NPC")
     
-    local TRAIT_OPTIONS = {"Berry", "Fruit", "Flower", "Vegetable", "Tropical", "Prickly", "Woody", "Leafy", "Stalky", "Root", "Sweet", "Sour"}
-    local timeSinceEpoch = Workspace:GetServerTimeNow() - (AncientArcConfig.TRAIT_EPOCH or 0)
-    local switchCount = math.floor(timeSinceEpoch / (AncientArcConfig.TRAIT_SWITCH_TIMER or 1800))
-    local seed = AncientArcConfig.TRAIT_SEED or 104729
-    
-    local nextIdx = ((switchCount + seed) % #TRAIT_OPTIONS) + 1
-    local currentIdx = (nextIdx - 2) % #TRAIT_OPTIONS + 1
-    
-    return TRAIT_OPTIONS[currentIdx], TRAIT_OPTIONS[nextIdx]
+    if npc then
+        -- Cari ThoughtBubblePart
+        local bubble = npc:FindFirstChild("ThoughtBubblePart")
+        if not bubble then
+            -- Kalau tidak ketemu, coba cari di dalam descendant (jaga-jaga kalau letaknya beda)
+            bubble = npc:FindFirstChild("ThoughtBubblePart", true)
+        end
+        
+        if bubble then
+            local traitLabel = bubble:FindFirstChild("Trait", true)
+            if traitLabel and traitLabel:IsA("TextLabel") then
+                -- Teks aslinya: "Looking for <font color=...><b>Leafy</b></font> plants!"
+                -- Kita ambil kata di antara <b> dan </b>
+                local match = string.match(traitLabel.Text, "<b>(.-)</b>")
+                if match then
+                    return match, "?" -- "?" karena Next Trait tidak ditampilkan di UI
+                end
+            end
+        end
+    end
 end
 
 -- ==================================================================
@@ -172,7 +185,7 @@ local rewardStatusLbl = createStatusLbl(TrackerSection, "🎁 Reward: ...", 96, 
 rewardStatusLbl.TextColor3 = C.accent
 
 local coinStatusLbl = createStatusLbl(TrackerSection, "🪙 AnubisCoins: 0", 125, 20)
-coinStatusLbl.TextColor3 = C.success
+coinStatusLbl.TextColor3 = C.warning
 coinStatusLbl.Font = Enum.Font.GothamBold
 
 task.spawn(function()
