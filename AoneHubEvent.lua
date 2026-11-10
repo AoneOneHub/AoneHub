@@ -172,22 +172,22 @@ end
 -- ==================================================================
 local TrackerSection = createSection(Scroll, "📊 Anubis Event Tracker", "anubisTracker")
 TrackerSection.LayoutOrder = 1
-TrackerSection.Size = UDim2.new(1, -10, 0, 195)
+TrackerSection.Size = UDim2.new(1, -10, 0, 158)
 
 local stormStatusLbl = createStatusLbl(TrackerSection, "🌪️ DuneStorm: Loading...", 28, 14)
 stormStatusLbl.TextColor3 = C.warning
 
-local arcStatusLbl = createStatusLbl(TrackerSection, "⛏️ Archaeology: Loading...", 45, 30)
+local arcStatusLbl = createStatusLbl(TrackerSection, "⛏️ Archeology: Loading...", 47, 30)
 arcStatusLbl.TextColor3 = C.text
 
-local traitStatusLbl = createStatusLbl(TrackerSection, "🎯 Trait: ...", 78, 16)
+local traitStatusLbl = createStatusLbl(TrackerSection, "🎯 Trait: ...", 82, 16)
 traitStatusLbl.TextColor3 = C.success
 traitStatusLbl.Font = Enum.Font.GothamBold
 
-local rewardStatusLbl = createStatusLbl(TrackerSection, "🎁 Reward: ...", 96, 20)
+local rewardStatusLbl = createStatusLbl(TrackerSection, "🎁 Reward: ...", 103, 20)
 rewardStatusLbl.TextColor3 = C.accent
 
-local coinStatusLbl = createStatusLbl(TrackerSection, "💰 AnubisCoins: 0", 125, 20)
+local coinStatusLbl = createStatusLbl(TrackerSection, "💰 AnubisCoins: 0", 128, 20)
 coinStatusLbl.TextColor3 = C.warning
 coinStatusLbl.Font = Enum.Font.GothamBold
 
@@ -227,15 +227,15 @@ task.spawn(function()
                 local chaseStr = prog.Chase and " ⚠️ CHASE!" or ""
                 
                 if prog.Done then
-                    arcStatusLbl.Text = string.format("⛏️ Archaeology: %s | ✅ SELESAI", tostring(stageStr))
+                    arcStatusLbl.Text = string.format("⛏️ Archeology: %s | ✅ SELESAI", tostring(stageStr))
                     arcStatusLbl.TextColor3 = C.success
                     rewardStatusLbl.Text = "🎁 Reward: Klik NPC untuk Restart"
                 elseif prog.Ready then
-                    arcStatusLbl.Text = string.format("⛏️ Archaeology: %s | ✅ READY", tostring(stageStr))
+                    arcStatusLbl.Text = string.format("⛏️ Archeology: %s | ✅ READY", tostring(stageStr))
                     arcStatusLbl.TextColor3 = C.success
                 else
                     local weightStr = string.format("%.2f / %d kg", prog.Weight or 0, prog.Required or 0)
-                    arcStatusLbl.Text = string.format("⛏️ Archaeology: %s\n🎯 %s%s | ⚖️ %s", tostring(stageStr), objStr, chaseStr, weightStr)
+                    arcStatusLbl.Text = string.format("⛏️ Archeology: %s\n🎯 %s%s | ⚖️ %s", tostring(stageStr), objStr, chaseStr, weightStr)
                     arcStatusLbl.TextColor3 = C.text
                 end
 
@@ -252,7 +252,7 @@ end)
 -- ==================================================================
 local SubmitSection = createSection(Scroll, "⛏️ Auto Submit Archaeology", "anubisSubmit")
 SubmitSection.LayoutOrder = 2
-SubmitSection.Size = UDim2.new(1, -10, 0, 90)
+SubmitSection.Size = UDim2.new(1, -10, 0, 137)
 
 local isAutoSubmitRunning = false
 local submitStatus = createStatusLbl(SubmitSection, "Status: Idle", 28, 14)
@@ -292,7 +292,7 @@ local function doAutoSubmitCycle()
         savedSubmitCFrame = hrp.CFrame
     end
 
-    submitStatus.Text = "Status: ⏳ Memulai 10x Submit..."
+    submitStatus.Text = "Status: ⏳ Memulai Submit..."
     submitStatus.TextColor3 = C.warning
     
     local npcCFrame = getArchieCFrame()
@@ -368,7 +368,7 @@ local function doAutoSubmitCycle()
 
     -- Kembali ke posisi awal
     if savedSubmitCFrame and isAutoSubmitRunning then
-        submitStatus.Text = "Status: 🔙 Kembali ke kebun..."
+        submitStatus.Text = "Status: 🔙 Kembali ke posisi"
         pcall(function() TeleportPlayer(Player, savedSubmitCFrame, "Return") end)
         task.wait(1.5)
     end
@@ -402,18 +402,73 @@ local function toggleAutoSubmit()
     end
 end
 
-submitBtn = createBtn(SubmitSection, "▶️ Mulai Auto Submit", 50, C.success, toggleAutoSubmit)
+submitBtn = createBtn(SubmitSection, "▶️ Mulai Auto Submit", 47, C.success, toggleAutoSubmit)
+
+local isAutoRestartRunning = false
+local restartStatus = createStatusLbl(SubmitSection, "Auto Restart 1T Sheckles", 80, 14)
+
+local restartBtn
+local function toggleAutoRestart()
+    isAutoRestartRunning = not isAutoRestartRunning
+    EventConfig.anubisAutoRestart = isAutoRestartRunning
+    saveEventConfig()
+    
+    if isAutoRestartRunning then
+        restartBtn.Text = "⏹️ Stop Auto Restart"
+        restartBtn.BackgroundColor3 = C.danger
+        
+        task.spawn(function()
+            while isAutoRestartRunning and not _G.AoneHub_IsDestroyed do
+                if not AncientArcController then task.wait(2) continue end
+                
+                local ok, prog = pcall(function() return AncientArcController:GetProgress() end)
+                if ok and prog and prog.Done then
+                    submitStatus.Text = "Status: 🔄 Mencoba restart..."
+                    submitStatus.TextColor3 = C.warning
+                    
+                    local success, res = pcall(function()
+                        return AncientArcController:RestartWithSheckles()
+                    end)
+                    
+                    if success and res and res.Success then
+                        submitStatus.Text = "Status: ✅ Restart Sukses!"
+                        submitStatus.TextColor3 = C.success
+                        _G.AoneHub_AnubisSeq = 0
+                        task.wait(5)
+                    else
+                        local reason = (res and res.Reason) or "Error"
+                        submitStatus.Text = "Status: ❌ Gagal (" .. tostring(reason) .. ")"
+                        submitStatus.TextColor3 = C.danger
+                        task.wait(10) 
+                    end
+                else
+                    submitStatus.Text = "Status: ⏳ Menunggu stage selesai..."
+                    submitStatus.TextColor3 = C.textDim
+                    task.wait(3)
+                end
+                task.wait(2)
+            end
+            submitStatus.Text = "Status: Auto Restart Stopped"
+            submitStatus.TextColor3 = C.textDim
+        end)
+    else
+        restartBtn.Text = "▶️ Mulai Auto Restart"
+        restartBtn.BackgroundColor3 = C.success
+    end
+end
+
+restartBtn = createBtn(SubmitSection, "▶️ Mulai Auto Restart", 99, C.success, toggleAutoRestart)
 
 -- ==================================================================
 -- FITUR 3: SMART AUTO SELL (Trader Tina)
 -- ==================================================================
 local SellSection = createSection(Scroll, "🌾 Smart Auto Sell (Anubis)", "anubisSell")
 SellSection.LayoutOrder = 3
-SellSection.Size = UDim2.new(1, -10, 0, 130)
+SellSection.Size = UDim2.new(1, -10, 0, 87)
 
 local isSellEnabled = false
 local inventoryThread = nil
-local statusSellLbl = createStatusLbl(SellSection, "Status: Idle", 28, 30)
+local statusSellLbl = createStatusLbl(SellSection, "Status: Idle", 28, 16)
 
 local function getTraderTinaCFrame()
     local interaction = Workspace:FindFirstChild("Interaction")
@@ -531,14 +586,14 @@ local function toggleAutoSell()
     end
 end
 
-sellToggleBtn = createBtn(SellSection, "▶️ Aktifkan Smart Auto-Sell", 60, C.success, toggleAutoSell)
+sellToggleBtn = createBtn(SellSection, "▶️ Aktifkan Smart Auto-Sell", 49, C.success, toggleAutoSell)
 
 -- ==================================================================
 -- FITUR 4: AUTO BUY ANUBIS SHOP (Opsi A: Gembok)
 -- ==================================================================
 local BuySection = createSection(Scroll, "🛒 Auto Buy Anubis Shop", "anubisBuy")
 BuySection.LayoutOrder = 4
-BuySection.Size = UDim2.new(1, -10, 0, 320)
+BuySection.Size = UDim2.new(1, -10, 0, 278)
 
 local isAutoBuyRunning = false
 local buyStatus = createStatusLbl(BuySection, "Status: Idle", 28, 14)
@@ -719,73 +774,11 @@ end
 buyBtn = createBtn(BuySection, "▶️ Mulai Auto Buy", 240, C.success, toggleAutoBuy)
 
 -- ==================================================================
--- FITUR 5: AUTO RESTART ARCHAEOLOGY
--- ==================================================================
-local RestartSection = createSection(Scroll, "🔄 Auto Restart Archaeology", "anubisRestart")
-RestartSection.LayoutOrder = 5
-RestartSection.Size = UDim2.new(1, -10, 0, 90)
-
-local isAutoRestartRunning = false
-local restartStatus = createStatusLbl(RestartSection, "Status: Idle", 28, 14)
-
-local restartBtn
-local function toggleAutoRestart()
-    isAutoRestartRunning = not isAutoRestartRunning
-    EventConfig.anubisAutoRestart = isAutoRestartRunning
-    saveEventConfig()
-    
-    if isAutoRestartRunning then
-        restartBtn.Text = "⏹️ Stop Auto Restart"
-        restartBtn.BackgroundColor3 = C.danger
-        
-        task.spawn(function()
-            while isAutoRestartRunning and not _G.AoneHub_IsDestroyed do
-                if not AncientArcController then task.wait(2) continue end
-                
-                local ok, prog = pcall(function() return AncientArcController:GetProgress() end)
-                if ok and prog and prog.Done then
-                    restartStatus.Text = "Status: 🔄 Mencoba restart..."
-                    restartStatus.TextColor3 = C.warning
-                    
-                    local success, res = pcall(function()
-                        return AncientArcController:RestartWithSheckles()
-                    end)
-                    
-                    if success and res and res.Success then
-                        restartStatus.Text = "Status: ✅ Restart Sukses!"
-                        restartStatus.TextColor3 = C.success
-                        _G.AoneHub_AnubisSeq = 0
-                        task.wait(5)
-                    else
-                        local reason = (res and res.Reason) or "Error"
-                        restartStatus.Text = "Status: ❌ Gagal (" .. tostring(reason) .. ")"
-                        restartStatus.TextColor3 = C.danger
-                        task.wait(10) 
-                    end
-                else
-                    restartStatus.Text = "Status: ⏳ Menunggu stage selesai..."
-                    restartStatus.TextColor3 = C.textDim
-                    task.wait(3)
-                end
-                task.wait(2)
-            end
-            restartStatus.Text = "Status: Stopped"
-            restartStatus.TextColor3 = C.textDim
-        end)
-    else
-        restartBtn.Text = "▶️ Mulai Auto Restart"
-        restartBtn.BackgroundColor3 = C.success
-    end
-end
-
-restartBtn = createBtn(RestartSection, "▶️ Mulai Auto Restart", 50, C.success, toggleAutoRestart)
-
--- ==================================================================
--- FITUR 6: AUTO CHARGE OBELISK
+-- FITUR 5: AUTO CHARGE OBELISK
 -- ==================================================================
 local ChargeSection = createSection(Scroll, "⚡ Auto Charge Obelisk", "anubisCharge")
-ChargeSection.LayoutOrder = 6
-ChargeSection.Size = UDim2.new(1, -10, 0, 90)
+ChargeSection.LayoutOrder = 5
+ChargeSection.Size = UDim2.new(1, -10, 0, 85)
 
 local isAutoChargeRunning = false
 local chargeStatus = createStatusLbl(ChargeSection, "Status: Idle", 28, 14)
@@ -905,14 +898,8 @@ local function toggleAutoCharge()
     saveEventConfig()
     
     if isAutoChargeRunning then
-        if not Workspace:GetAttribute("DuneStorm") then
-            chargeStatus.Text = "Status: ❌ DuneStorm tidak aktif!"
-            chargeStatus.TextColor3 = C.danger
-            isAutoChargeRunning = false
-            EventConfig.anubisAutoCharge = false
-            saveEventConfig()
-            return
-        end
+        -- ⭐ Hapus pengecekan DuneStorm di sini. 
+        -- Biarkan script menyala dan standby menunggu DuneStorm.
         
         chargeBtn.Text = "⏹️ Stop Auto Charge"
         chargeBtn.BackgroundColor3 = C.danger
@@ -937,7 +924,7 @@ local function toggleAutoCharge()
     end
 end
 
-chargeBtn = createBtn(ChargeSection, "▶️ Mulai Auto Charge", 50, C.success, toggleAutoCharge)
+chargeBtn = createBtn(ChargeSection, "▶️ Mulai Auto Charge", 47, C.success, toggleAutoCharge)
 
 -- ==================================================================
 -- AUTO-START CONFIG LOADER
