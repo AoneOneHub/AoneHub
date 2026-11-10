@@ -134,9 +134,9 @@ local GameEvents = ReplicatedStorage:WaitForChild("GameEvents")
 local AnubisSellRemote = GameEvents:WaitForChild("Events"):WaitForChild("AnubisEvent"):WaitForChild("AnubisCoinsSell"):WaitForChild("Sell")
 local BuyShopRemote = GameEvents:WaitForChild("BuyEventShopStock")
 
--- ⭐ FUNGSI DETEKSI TRAIT (Berdasarkan Path Terbaru)
+-- ⭐ FUNGSI DETEKSI TRAIT (Hanya Current Trait)
 local function getActiveTrait()
-    -- 1. Baca langsung dari ThoughtBubblePart di folder Important
+    -- 1. Baca langsung dari ThoughtBubblePart
     local interaction = Workspace:FindFirstChild("Interaction")
     local eventModel = interaction and interaction:FindFirstChild("AnubisEventModel")
     local arcModel = eventModel and eventModel:FindFirstChild("AncientArc")
@@ -150,14 +150,11 @@ local function getActiveTrait()
             local traitObj = holder and holder:FindFirstChild("Trait")
             
             if traitObj then
-                -- Ambil teks dari ContentText (jika ada) atau properti Text biasa
                 local text = traitObj.ContentText or traitObj.Text
                 if text and type(text) == "string" then
-                    -- Format teks: "Looking for Vegetable plants!"
-                    -- Kita potong kata di antara "Looking for " dan " plants!"
                     local match = string.match(text, "Looking for (.-) plants!")
                     if match then
-                        return match, "?" -- Next trait tidak ditampilkan oleh server
+                        return match -- Hanya return current trait
                     end
                 end
             end
@@ -214,10 +211,10 @@ task.spawn(function()
             coinStatusLbl.Text = "🪙 AnubisCoins: " .. tostring(data.SpecialCurrency.AnubisCoins or 0)
         end
 
-        -- ⭐ PERBAIKAN: Gunakan tostring() agar tidak error jika nil
-        local currentTrait, nextTrait = getActiveTrait()
-        traitStatusLbl.Text = string.format("🎯 Trait: %s | Next: %s", tostring(currentTrait or "?"), tostring(nextTrait or "?"))
-
+        -- ⭐ Update Trait (Hanya Current)
+        local currentTrait = getActiveTrait()
+        traitStatusLbl.Text = string.format("🎯 Trait: %s", tostring(currentTrait or "?"))
+            
         if AncientArcController then
             local ok, prog = pcall(function() return AncientArcController:GetProgress() end)
             if ok and prog then
