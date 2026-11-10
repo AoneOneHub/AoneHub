@@ -213,31 +213,33 @@ task.spawn(function()
             coinStatusLbl.Text = "🪙 AnubisCoins: " .. tostring(data.SpecialCurrency.AnubisCoins or 0)
         end
 
+        -- ⭐ PERBAIKAN: Gunakan tostring() agar tidak error jika nil
         local currentTrait, nextTrait = getActiveTrait()
-        traitStatusLbl.Text = string.format("🎯 Trait: %s | Next: %s", currentTrait, nextTrait)
+        traitStatusLbl.Text = string.format("🎯 Trait: %s | Next: %s", tostring(currentTrait or "?"), tostring(nextTrait or "?"))
 
         if AncientArcController then
             local ok, prog = pcall(function() return AncientArcController:GetProgress() end)
             if ok and prog then
                 local stageStr = string.format("Stage %d/%d", prog.Stage or 1, prog.Max or 20)
-                local objStr = prog.ObjectDisplay or "?"
+                local objStr = tostring(prog.ObjectDisplay or "?")
                 local chaseStr = prog.Chase and " ⚠️ CHASE!" or ""
                 
                 if prog.Done then
-                    arcStatusLbl.Text = string.format("⛏️ Archaeology: %s | ✅ SELESAI", stageStr)
+                    arcStatusLbl.Text = string.format("⛏️ Archaeology: %s | ✅ SELESAI", tostring(stageStr))
                     arcStatusLbl.TextColor3 = C.success
                     rewardStatusLbl.Text = "🎁 Reward: Klik NPC untuk Restart"
                 elseif prog.Ready then
-                    arcStatusLbl.Text = string.format("⛏️ Archaeology: %s | ✅ READY", stageStr)
+                    arcStatusLbl.Text = string.format("⛏️ Archaeology: %s | ✅ READY", tostring(stageStr))
                     arcStatusLbl.TextColor3 = C.success
                 else
                     local weightStr = string.format("%.2f / %d kg", prog.Weight or 0, prog.Required or 0)
-                    arcStatusLbl.Text = string.format("⛏️ Archaeology: %s\n🎯 %s%s | ⚖️ %s", stageStr, objStr, chaseStr, weightStr)
+                    arcStatusLbl.Text = string.format("⛏️ Archaeology: %s\n🎯 %s%s | ⚖️ %s", tostring(stageStr), objStr, chaseStr, weightStr)
                     arcStatusLbl.TextColor3 = C.text
                 end
 
                 if prog.Reward then
-                    rewardStatusLbl.Text = string.format("🎁 Reward: %s x%d", prog.Reward.Value or "?", prog.Reward.Quantity or 1)
+                    -- ⭐ PERBAIKAN: Gunakan tostring() untuk Reward
+                    rewardStatusLbl.Text = string.format("🎁 Reward: %s x%d", tostring(prog.Reward.Value or "?"), prog.Reward.Quantity or 1)
                 end
             end
         end
